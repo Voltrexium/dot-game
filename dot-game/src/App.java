@@ -42,6 +42,7 @@ public class App {
     static boolean gameOver = false;
     static Tile[][] board = new Tile[5][5];
     static State turn = State.PLAYER1;
+
     public static void initializeBoard() {
         for (int i = 0; i < board.length; i++) {
             for (int j = 0; j < board[i].length; j++) {
@@ -49,11 +50,12 @@ public class App {
             }
         }
         
-        board[0][0] = new Tile(State.PLAYER1, 3);
+        // CHANGE 1: Start with value 1 (Safe for corners)
+        board[0][0] = new Tile(State.PLAYER1, 1);
 
         int lastRow = board.length - 1;
         int lastCol = board[0].length - 1;
-        board[lastRow][lastCol] = new Tile(State.PLAYER2, 3);
+        board[lastRow][lastCol] = new Tile(State.PLAYER2, 1);
     }
 
     public static void printBoard() {
@@ -66,7 +68,7 @@ public class App {
         System.out.println(); 
 
         for (int i = 0; i < board.length; i++) {
-            System.out.print("{" + (i+1) + "}  ");
+            System.out.print("{" + (i+1) + "}   ");
             
             for (int j = 0; j < board[i].length; j++) {
                 System.out.print(board[i][j]);
@@ -76,6 +78,24 @@ public class App {
         System.out.println();
     }
     
+    // Helper to determine max capacity based on position
+    public static int getCriticalMass(int r, int c) {
+        int maxRows = board.length - 1;
+        int maxCols = board[0].length - 1;
+        
+        // Corners -> Explode at 2
+        boolean isCorner = (r==0 && c==0) || (r==0 && c==maxCols) || 
+                           (r==maxRows && c==0) || (r==maxRows && c==maxCols);
+        if (isCorner) return 2;
+        
+        // Edges -> Explode at 3
+        boolean isEdge = (r==0 || c==0 || r==maxRows || c==maxCols);
+        if (isEdge) return 3;
+        
+        // Middle -> Explode at 4
+        return 4;
+    }
+
     public static void checkWinCondition() {
         boolean p1HasTiles = false;
         boolean p2HasTiles = false;
@@ -102,14 +122,14 @@ public class App {
         }
     }
     
-    public static void checkExplosion(int r, int c) throws InterruptedException {
-        if (board[r][c].getVal() < 4) return;
+    public static void checkExplosion(int r, int c) {
+        int capacity = getCriticalMass(r, c);
 
-        System.out.println(">>> BOOM! Explosion at " + (r+1) + ", " + (c+1));
-        printBoard(); 
-        Thread.sleep(1000); 
+        // Check against dynamic capacity
+        if (board[r][c].getVal() < capacity) return;
 
-        board[r][c].reset();
+        // Reset the exploding tile
+        board[r][c].reset(); 
 
         int[][] directions = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
 
@@ -128,14 +148,18 @@ public class App {
         initializeBoard();
         Scanner scanner = new Scanner(System.in);
 
-        System.out.println("INSTRUCTIONS:");
-        System.out.println("1. Select your own tile to increment its value.");
-        System.out.println("2. When a tile hits 4, it EXPLODES.");
+        System.out.println("------------------------------------------");
+        System.out.println("CHAIN REACTION - INSTRUCTIONS:");
+        System.out.println("1. Select your own tile to increment it.");
+        System.out.println("2. CRITICAL MASS RULES (Explosion Threshold):");
+        System.out.println("   - Corners explode at 2");
+        System.out.println("   - Edges explode at 3");
+        System.out.println("   - Middle explodes at 4");
         System.out.println("3. Eliminate all opponent tiles to WIN!");
-        System.out.println("[X] - Player 1 | (X) - Player 2");
+        System.out.println("   [X] - Player 1 | (X) - Player 2");
+        System.out.println("------------------------------------------");
 
         while (!gameOver) {
-            System.out.println("\n\n--------------------------------");
             printBoard();
 
             System.out.println(turn + "'s turn. Enter row, col:");
