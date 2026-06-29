@@ -50,7 +50,6 @@ public class App {
             }
         }
         
-        // CHANGE 1: Start with value 1 (Safe for corners)
         board[0][0] = new Tile(State.PLAYER1, 1);
 
         int lastRow = board.length - 1;
@@ -78,7 +77,6 @@ public class App {
         System.out.println();
     }
     
-    // Helper to determine max capacity based on position
     public static int getCriticalMass(int r, int c) {
         int maxRows = board.length - 1;
         int maxCols = board[0].length - 1;

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chain Reaction</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.25rem;
+      padding: 1.5rem;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    #status {
+      font-size: 1.1rem;
+      min-height: 1.5em;
+      text-align: center;
+    }
+
+    #status.error {
+      color: #ff6b6b;
+    }
+
+    #status.win {
+      color: #ffd93d;
+      font-weight: 600;
+    }
+
+    .board-wrap {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 1rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    canvas {
+      display: block;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+
+    .instructions {
+      max-width: 420px;
+      font-size: 0.9rem;
+      line-height: 1.55;
+      color: #aab;
+      text-align: center;
+    }
+
+    .instructions strong {
+      color: #4ecdc4;
+    }
+
+    .legend {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.95rem;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+    }
+
+    .swatch.p1 { background: #4ecdc4; }
+    .swatch.p2 { background: #ff6b6b; }
+
+    button {
+      padding: 0.55rem 1.25rem;
+      font-size: 0.95rem;
+      border: none;
+      border-radius: 6px;
+      background: #4ecdc4;
+      color: #1a1a2e;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #3dbdb5;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  </style>
+</head>
+<body>
+  <h1>Chain Reaction</h1>
+
+  <div class="legend">
+    <span><span class="swatch p1"></span> Player 1</span>
+    <span><span class="swatch p2"></span> Player 2</span>
+  </div>
+
+  <p id="status">Player 1's turn — click one of your tiles</p>
+
+  <div class="board-wrap">
+    <canvas id="game" width="520" height="520"></canvas>
+  </div>
+
+  <button id="restart" type="button" hidden>New Game</button>
+
+  <p class="instructions">
+    Click your own tile to add a dot. Tiles explode at critical mass:
+    <strong>corners 2</strong>, <strong>edges 3</strong>, <strong>center 4</strong>.
+    Eliminate all opponent tiles to win.
+  </p>
+
+  <script src="app.js"></script>
+</body>
+</html>
