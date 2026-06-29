@@ -98,6 +98,8 @@ function getCriticalMass(r, c) {
 }
 
 function checkWinCondition() {
+  if (gameOver) return true;
+
   let p1HasTiles = false;
   let p2HasTiles = false;
 
@@ -109,14 +111,20 @@ function checkWinCondition() {
   }
 
   if (!p1HasTiles) {
-    setStatus("GAME OVER! Player 2 wins!", "win");
+    setStatus("GAME OVER! Player 2 wins!", "win-p2");
     gameOver = true;
     restartBtn.hidden = false;
-  } else if (!p2HasTiles) {
-    setStatus("GAME OVER! Player 1 wins!", "win");
-    gameOver = true;
-    restartBtn.hidden = false;
+    return true;
   }
+
+  if (!p2HasTiles) {
+    setStatus("GAME OVER! Player 1 wins!", "win-p1");
+    gameOver = true;
+    restartBtn.hidden = false;
+    return true;
+  }
+
+  return false;
 }
 
 function smoothstep(t) {
@@ -287,6 +295,8 @@ function orbMotion(localT) {
 }
 
 async function processExplosionAt(r, c, gen) {
+  if (gameOver || gen !== animGeneration) return;
+
   const capacity = getCriticalMass(r, c);
   if (board[r][c].val < capacity) return;
 
@@ -296,28 +306,45 @@ async function processExplosionAt(r, c, gen) {
   drawBoard();
 
   await animateSplitOrbs(r, c, neighbors, turn, gen);
-  if (gen !== animGeneration) return;
+  if (gen !== animGeneration || gameOver) return;
 
   for (const { nr, nc } of neighbors) {
     board[nr][nc].addValue(turn);
   }
   drawBoard();
 
+  if (checkWinCondition()) return;
+
   for (const { nr, nc } of neighbors) {
     await processExplosionAt(nr, nc, gen);
-    if (gen !== animGeneration) return;
+    if (gen !== animGeneration || gameOver) return;
   }
 }
 
 function setStatus(text, kind = "") {
-  statusEl.textContent = text;
   statusEl.className = kind;
+  statusEl.innerHTML = `<span class="turn-indicator__text">${text}</span>`;
 }
 
-function updateTurnStatus() {
+function setTurnStatus(player, { busy = false, message } = {}) {
+  const isP1 = player === State.PLAYER1;
+  const name = isP1 ? "Player 1" : "Player 2";
+  const turnClass = isP1 ? "turn-p1" : "turn-p2";
+  const busyClass = busy ? " busy" : "";
+  const text =
+    message ??
+    `<span class="turn-indicator__player">${name}</span>'s turn — ${INPUT_VERB} one of your tiles`;
+
+  statusEl.className = `${turnClass}${busyClass}`;
+  statusEl.innerHTML = `
+    <span class="turn-indicator__dot" aria-hidden="true"></span>
+    <span class="turn-indicator__text">${text}</span>
+  `;
+}
+
+function updateTurnStatus({ busy = false } = {}) {
   if (gameOver) return;
-  const name = turn === State.PLAYER1 ? "Player 1" : "Player 2";
-  setStatus(`${name}'s turn — ${INPUT_VERB} one of your tiles`);
+  setTurnStatus(turn, { busy });
 }
 
 function cellAtPixel(px, py) {
@@ -450,7 +477,7 @@ async function tryMove(r, c) {
 
   const gen = ++animGeneration;
   animating = true;
-  setStatus("Chain reaction…");
+  setTurnStatus(turn, { busy: true, message: "Chain reaction…" });
 
   board[r][c].addValue(turn);
   drawBoard();
