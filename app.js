@@ -5,8 +5,8 @@ const State = {
 };
 
 const BOARD_SIZE = 5;
-const LABEL_OFFSET = 36;
-const CELL_SIZE = (520 - LABEL_OFFSET) / BOARD_SIZE;
+const BASE_BOARD_SIZE = 520;
+const MIN_BOARD_SIZE = 280;
 const ORB_DURATION = 220;
 const ORB_STAGGER = 40;
 const EMERGE_FRACTION = 0.22;
@@ -20,8 +20,14 @@ const DIRECTIONS = [
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+const boardWrap = document.querySelector(".board-wrap");
 const statusEl = document.getElementById("status");
 const restartBtn = document.getElementById("restart");
+const INPUT_VERB = window.matchMedia("(pointer: coarse)").matches ? "tap" : "click";
+
+let boardPixelSize = BASE_BOARD_SIZE;
+let labelOffset = 36;
+let cellSize = (boardPixelSize - labelOffset) / BOARD_SIZE;
 
 const COLORS = {
   bg: "#0f3460",
@@ -117,15 +123,19 @@ function smoothstep(t) {
   return t * t * (3 - 2 * t);
 }
 
+function boardScale() {
+  return boardPixelSize / BASE_BOARD_SIZE;
+}
+
 function cellCenter(r, c) {
   return {
-    x: LABEL_OFFSET + c * CELL_SIZE + CELL_SIZE / 2,
-    y: LABEL_OFFSET + r * CELL_SIZE + CELL_SIZE / 2,
+    x: labelOffset + c * cellSize + cellSize / 2,
+    y: labelOffset + r * cellSize + cellSize / 2,
   };
 }
 
 function dotRadius() {
-  return Math.min(CELL_SIZE * 0.13, 10);
+  return Math.min(cellSize * 0.13, 10 * boardScale());
 }
 
 const DOT_LAYOUT = {
@@ -149,17 +159,38 @@ const DOT_LAYOUT = {
 
 function dotOffsets(count) {
   const layout = DOT_LAYOUT[Math.min(count, 4)] || DOT_LAYOUT[4];
-  const spread = CELL_SIZE * 0.28;
+  const spread = cellSize * 0.28;
   const offsets = [];
 
   for (let i = 0; i < count; i++) {
     const [ox, oy] = layout[i % layout.length];
     const extra = Math.floor(i / layout.length);
-    const jitter = extra * 3;
+    const jitter = extra * 3 * boardScale();
     offsets.push({ x: ox * spread + jitter, y: oy * spread });
   }
 
   return offsets;
+}
+
+function resizeBoard() {
+  const styles = getComputedStyle(boardWrap);
+  const padX =
+    parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+  const available = boardWrap.clientWidth - padX;
+  const max = Math.min(BASE_BOARD_SIZE, available);
+
+  boardPixelSize = Math.max(MIN_BOARD_SIZE, max);
+  labelOffset = Math.round(36 * boardScale());
+  cellSize = (boardPixelSize - labelOffset) / BOARD_SIZE;
+
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = `${boardPixelSize}px`;
+  canvas.style.height = `${boardPixelSize}px`;
+  canvas.width = Math.round(boardPixelSize * dpr);
+  canvas.height = Math.round(boardPixelSize * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  if (board) drawBoard();
 }
 
 function validNeighbors(r, c) {
@@ -286,13 +317,13 @@ function setStatus(text, kind = "") {
 function updateTurnStatus() {
   if (gameOver) return;
   const name = turn === State.PLAYER1 ? "Player 1" : "Player 2";
-  setStatus(`${name}'s turn — click one of your tiles`);
+  setStatus(`${name}'s turn — ${INPUT_VERB} one of your tiles`);
 }
 
 function cellAtPixel(px, py) {
-  if (px < LABEL_OFFSET || py < LABEL_OFFSET) return null;
-  const c = Math.floor((px - LABEL_OFFSET) / CELL_SIZE);
-  const r = Math.floor((py - LABEL_OFFSET) / CELL_SIZE);
+  if (px < labelOffset || py < labelOffset) return null;
+  const c = Math.floor((px - labelOffset) / cellSize);
+  const r = Math.floor((py - labelOffset) / cellSize);
   if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) return null;
   return { r, c };
 }
@@ -312,10 +343,10 @@ function drawDotsInCell(r, c, tile) {
   const count = tile.val;
   if (count === 0) return;
 
-  const x0 = LABEL_OFFSET + c * CELL_SIZE;
-  const y0 = LABEL_OFFSET + r * CELL_SIZE;
-  const cx = x0 + CELL_SIZE / 2;
-  const cy = y0 + CELL_SIZE / 2;
+  const x0 = labelOffset + c * cellSize;
+  const y0 = labelOffset + r * cellSize;
+  const cx = x0 + cellSize / 2;
+  const cy = y0 + cellSize / 2;
   const { color, dark } = ownerColors(tile.state);
   const radius = dotRadius();
 
@@ -338,45 +369,59 @@ function drawOverlay() {
 }
 
 function drawBoard() {
+  const scale = boardScale();
+  const inset = Math.max(1, scale);
+  const borderInset = 3 * scale;
+
   ctx.fillStyle = COLORS.bg;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, boardPixelSize, boardPixelSize);
 
   ctx.fillStyle = COLORS.label;
-  ctx.font = "13px Segoe UI, system-ui, sans-serif";
+  ctx.font = `${Math.round(13 * scale)}px Segoe UI, system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
   for (let k = 0; k < BOARD_SIZE; k++) {
-    const colX = LABEL_OFFSET + k * CELL_SIZE + CELL_SIZE / 2;
-    const rowY = LABEL_OFFSET + k * CELL_SIZE + CELL_SIZE / 2;
-    ctx.fillText(String(k + 1), colX, LABEL_OFFSET / 2);
-    ctx.fillText(String(k + 1), LABEL_OFFSET / 2, rowY);
+    const colX = labelOffset + k * cellSize + cellSize / 2;
+    const rowY = labelOffset + k * cellSize + cellSize / 2;
+    ctx.fillText(String(k + 1), colX, labelOffset / 2);
+    ctx.fillText(String(k + 1), labelOffset / 2, rowY);
   }
 
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
-      const x = LABEL_OFFSET + c * CELL_SIZE;
-      const y = LABEL_OFFSET + r * CELL_SIZE;
+      const x = labelOffset + c * cellSize;
+      const y = labelOffset + r * cellSize;
       const tile = board[r][c];
 
       ctx.fillStyle = COLORS.empty;
-      ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+      ctx.fillRect(x + inset, y + inset, cellSize - inset * 2, cellSize - inset * 2);
 
       if (tile.state === State.PLAYER1) {
         ctx.strokeStyle = COLORS.p1;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x + 3, y + 3, CELL_SIZE - 6, CELL_SIZE - 6);
+        ctx.lineWidth = 2 * scale;
+        ctx.strokeRect(
+          x + borderInset,
+          y + borderInset,
+          cellSize - borderInset * 2,
+          cellSize - borderInset * 2
+        );
       } else if (tile.state === State.PLAYER2) {
         ctx.strokeStyle = COLORS.p2;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x + 3, y + 3, CELL_SIZE - 6, CELL_SIZE - 6);
+        ctx.lineWidth = 2 * scale;
+        ctx.strokeRect(
+          x + borderInset,
+          y + borderInset,
+          cellSize - borderInset * 2,
+          cellSize - borderInset * 2
+        );
       }
 
       drawDotsInCell(r, c, tile);
 
       ctx.strokeStyle = COLORS.grid;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+      ctx.lineWidth = scale;
+      ctx.strokeRect(x, y, cellSize, cellSize);
     }
   }
 
@@ -384,7 +429,12 @@ function drawBoard() {
 
   if (gameOver) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-    ctx.fillRect(LABEL_OFFSET, LABEL_OFFSET, CELL_SIZE * BOARD_SIZE, CELL_SIZE * BOARD_SIZE);
+    ctx.fillRect(
+      labelOffset,
+      labelOffset,
+      cellSize * BOARD_SIZE,
+      cellSize * BOARD_SIZE
+    );
   }
 
   canvas.style.cursor = animating ? "wait" : "pointer";
@@ -419,14 +469,17 @@ async function tryMove(r, c) {
   drawBoard();
 }
 
-canvas.addEventListener("click", (e) => {
+function handleBoardPointer(e) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const px = (e.clientX - rect.left) * scaleX;
-  const py = (e.clientY - rect.top) * scaleY;
+  const px = (e.clientX - rect.left) * (boardPixelSize / rect.width);
+  const py = (e.clientY - rect.top) * (boardPixelSize / rect.height);
   const cell = cellAtPixel(px, py);
   if (cell) tryMove(cell.r, cell.c);
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  handleBoardPointer(e);
 });
 
 restartBtn.addEventListener("click", () => {
@@ -440,5 +493,6 @@ restartBtn.addEventListener("click", () => {
 });
 
 initializeBoard();
+resizeBoard();
 updateTurnStatus();
-drawBoard();
+window.addEventListener("resize", resizeBoard);

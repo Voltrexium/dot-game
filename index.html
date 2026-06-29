@@ -80,6 +80,8 @@
     }
 
     .board-wrap {
+      width: 100%;
+      max-width: calc(520px + 2rem);
       background: #16213e;
       border-radius: 12px;
       padding: 1rem;
@@ -88,8 +90,10 @@
 
     canvas {
       display: block;
+      max-width: 100%;
       cursor: pointer;
       border-radius: 6px;
+      touch-action: manipulation;
     }
 
     .instructions {
@@ -144,6 +148,37 @@
       opacity: 0.5;
       cursor: default;
     }
+
+    @media (max-width: 600px) {
+      .game-main {
+        justify-content: flex-start;
+        padding: 1rem;
+        gap: 1rem;
+      }
+
+      h1 {
+        font-size: 1.4rem;
+      }
+
+      #status {
+        font-size: 1rem;
+        padding: 0 0.25rem;
+      }
+
+      .board-wrap {
+        padding: 0.75rem;
+      }
+
+      .legend {
+        font-size: 0.9rem;
+        gap: 1.25rem;
+      }
+
+      .instructions {
+        font-size: 0.85rem;
+        padding: 0 0.25rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -164,16 +199,16 @@
     <span><span class="swatch p2"></span> Player 2</span>
   </div>
 
-  <p id="status">Player 1's turn — click one of your tiles</p>
+  <p id="status">Player 1's turn — tap one of your tiles</p>
 
   <div class="board-wrap">
-    <canvas id="game" width="520" height="520"></canvas>
+    <canvas id="game"></canvas>
   </div>
 
   <button id="restart" type="button" hidden>New Game</button>
 
   <p class="instructions">
-    Click your own tile to add a dot. Tiles explode at critical mass:
+    Tap or click your own tile to add a dot. Tiles explode at critical mass:
     <strong>corners 2</strong>, <strong>edges 3</strong>, <strong>center 4</strong>.
     Eliminate all opponent tiles to win.
   </p>
