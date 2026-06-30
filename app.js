@@ -26,7 +26,6 @@ const ctx = canvas.getContext("2d");
 const boardWrap = document.querySelector(".board-wrap");
 const statusEl = document.getElementById("status");
 const restartBtn = document.getElementById("restart");
-const lobbyEl = document.getElementById("lobby");
 const createMatchBtn = document.getElementById("create-match");
 const joinMatchBtn = document.getElementById("join-match");
 const matchCodeInput = document.getElementById("match-code");
