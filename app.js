@@ -103,6 +103,11 @@ let gameOver;
 let animating = false;
 let animGeneration = 0;
 let overlay = null;
+/** Stops sibling explosions during an animated chain without settling the UI. */
+let chainGameOver = false;
+/** Win detected mid-chain; applied when the move animation finishes. */
+let pendingWin = null;
+let animationWaiters = [];
 /** While set, realtime echoes of this move are deferred until the HTTP response. */
 let pendingOwnMove = null;
 /** Latest match row held while our move HTTP request is in flight. */
@@ -193,6 +198,8 @@ function initializeBoard() {
   board = createInitialBoard();
   turn = State.PLAYER1;
   gameOver = false;
+  chainGameOver = false;
+  pendingWin = null;
   overlay = null;
   moveIndex = 0;
   lastAppliedMoveIndex = 0;
@@ -208,9 +215,23 @@ function hydrateBoardFromServer(serverBoard) {
 function cancelAnimations() {
   animGeneration++;
   animating = false;
+  chainGameOver = false;
+  pendingWin = null;
   overlay = null;
   pendingOwnMove = null;
   deferredMatchRow = null;
+  notifyAnimationEnd();
+}
+
+function waitForAnimationEnd() {
+  if (!animating) return Promise.resolve();
+  return new Promise((resolve) => animationWaiters.push(resolve));
+}
+
+function notifyAnimationEnd() {
+  const waiters = animationWaiters;
+  animationWaiters = [];
+  for (const resolve of waiters) resolve();
 }
 
 function syncFromServerRow(row, { refreshStatus = true } = {}) {
@@ -235,8 +256,37 @@ function moverForRow(row) {
   return row.turn === State.PLAYER1 ? State.PLAYER2 : State.PLAYER1;
 }
 
+function winStatusFor(winner) {
+  if (winner === State.PLAYER2) {
+    const text = onlineMode
+      ? localPlayer === State.PLAYER2
+        ? "You win!"
+        : "Opponent wins!"
+      : "GAME OVER! Player 2 wins!";
+    return { text, kind: "win-p2" };
+  }
+
+  const text = onlineMode
+    ? localPlayer === State.PLAYER1
+      ? "You win!"
+      : "Opponent wins!"
+    : "GAME OVER! Player 1 wins!";
+  return { text, kind: "win-p1" };
+}
+
+function applyPendingWin() {
+  if (!pendingWin) return;
+
+  const { text, kind } = winStatusFor(pendingWin);
+  setStatus(text, kind);
+  gameOver = true;
+  pendingWin = null;
+  chainGameOver = false;
+  updateRestartButtonVisibility();
+}
+
 function checkWinCondition() {
-  if (gameOver) return true;
+  if (gameOver || chainGameOver) return true;
 
   let p1HasTiles = false;
   let p2HasTiles = false;
@@ -249,24 +299,26 @@ function checkWinCondition() {
   }
 
   if (!p1HasTiles) {
-    const text = onlineMode
-      ? localPlayer === State.PLAYER2
-        ? "You win!"
-        : "Opponent wins!"
-      : "GAME OVER! Player 2 wins!";
-    setStatus(text, "win-p2");
+    if (animating) {
+      chainGameOver = true;
+      pendingWin = State.PLAYER2;
+      return true;
+    }
+    const { text, kind } = winStatusFor(State.PLAYER2);
+    setStatus(text, kind);
     gameOver = true;
     updateRestartButtonVisibility();
     return true;
   }
 
   if (!p2HasTiles) {
-    const text = onlineMode
-      ? localPlayer === State.PLAYER1
-        ? "You win!"
-        : "Opponent wins!"
-      : "GAME OVER! Player 1 wins!";
-    setStatus(text, "win-p1");
+    if (animating) {
+      chainGameOver = true;
+      pendingWin = State.PLAYER1;
+      return true;
+    }
+    const { text, kind } = winStatusFor(State.PLAYER1);
+    setStatus(text, kind);
     gameOver = true;
     updateRestartButtonVisibility();
     return true;
@@ -302,6 +354,7 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
   }
 
   if (nextMoveIndex <= lastAppliedMoveIndex) {
+    if (animating) await waitForAnimationEnd();
     hydrateBoardFromServer(row.board);
     turn = row.turn;
     moveIndex = nextMoveIndex;
@@ -318,34 +371,26 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
 
   const lastMove = row.last_move;
   const mover = moverForRow(row);
-
-  if (
+  const shouldAnimate =
     animate &&
     lastMove &&
     nextMoveIndex === lastAppliedMoveIndex + 1 &&
-    mover
-  ) {
+    mover;
+
+  if (shouldAnimate) {
+    if (animating) await waitForAnimationEnd();
     await animateMove(lastMove.r, lastMove.c, mover);
+  } else if (animating) {
+    await waitForAnimationEnd();
   }
 
   syncFromServerRow(row);
 }
 
 function showWinFromServer(winner) {
-  if (winner === State.PLAYER1) {
-    const text = onlineMode
-      ? localPlayer === State.PLAYER1
-        ? "You win!"
-        : "Opponent wins!"
-      : "GAME OVER! Player 1 wins!";
-    setStatus(text, "win-p1");
-  } else if (winner === State.PLAYER2) {
-    const text = onlineMode
-      ? localPlayer === State.PLAYER2
-        ? "You win!"
-        : "Opponent wins!"
-      : "GAME OVER! Player 2 wins!";
-    setStatus(text, "win-p2");
+  if (winner === State.PLAYER1 || winner === State.PLAYER2) {
+    const { text, kind } = winStatusFor(winner);
+    setStatus(text, kind);
   }
   updateRestartButtonVisibility();
 }
@@ -497,7 +542,7 @@ async function onMatchRowUpdated(row) {
   }
 
   const isRemoteMove = row.move_index > lastAppliedMoveIndex;
-  await applyServerMatchRow(row, { animate: isRemoteMove && !animating });
+  await applyServerMatchRow(row, { animate: isRemoteMove });
 }
 
 function onMatchDeleted() {
@@ -524,7 +569,7 @@ async function flushDeferredMatchRow() {
   const row = deferredMatchRow;
   deferredMatchRow = null;
   const isRemoteMove = row.move_index > lastAppliedMoveIndex;
-  await applyServerMatchRow(row, { animate: isRemoteMove && !animating });
+  await applyServerMatchRow(row, { animate: isRemoteMove });
 }
 
 function matchRowFromResponse(data) {
@@ -762,7 +807,7 @@ function orbMotion(localT) {
 }
 
 async function processExplosionAt(r, c, gen, actingPlayer) {
-  if (gameOver || gen !== animGeneration) return;
+  if (gen !== animGeneration) return;
 
   const capacity = getCriticalMass(r, c);
   if (board[r][c].val < capacity) return;
@@ -772,7 +817,7 @@ async function processExplosionAt(r, c, gen, actingPlayer) {
   drawBoard();
 
   await animateSplitOrbs(r, c, neighbors, actingPlayer, gen);
-  if (gen !== animGeneration || gameOver) return;
+  if (gen !== animGeneration) return;
 
   for (const { nr, nc } of neighbors) {
     const tile = board[nr][nc];
@@ -784,7 +829,7 @@ async function processExplosionAt(r, c, gen, actingPlayer) {
 
   for (const { nr, nc } of neighbors) {
     await processExplosionAt(nr, nc, gen, actingPlayer);
-    if (gen !== animGeneration || gameOver) return;
+    if (gen !== animGeneration || chainGameOver) return;
   }
 }
 
@@ -793,6 +838,8 @@ function animateMove(r, c, actingPlayer) {
 
   const gen = ++animGeneration;
   animating = true;
+  chainGameOver = false;
+  pendingWin = null;
   setTurnStatus(actingPlayer, { busy: true, message: "Chain reaction…" });
 
   const tile = board[r][c];
@@ -803,7 +850,9 @@ function animateMove(r, c, actingPlayer) {
     if (gen !== animGeneration) return;
 
     animating = false;
+    applyPendingWin();
     drawBoard();
+    notifyAnimationEnd();
   });
 }
 
@@ -1011,7 +1060,7 @@ function drawBoard() {
     ctx.fillStyle = "#e8d4b8";
     ctx.font = `${Math.round(14 * scale)}px Segoe UI, system-ui, sans-serif`;
     ctx.fillText("Match paused", cx, cy + 14 * scale);
-  } else if (gameOver) {
+  } else if (gameOver && !animating) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
     ctx.fillRect(boardLeft, boardTop, boardW, boardH);
   }
@@ -1057,6 +1106,9 @@ async function tryMove(r, c) {
       pendingOwnMove = null;
       deferredMatchRow = null;
       animating = false;
+      chainGameOver = false;
+      pendingWin = null;
+      notifyAnimationEnd();
 
       const message = err.message || "Move rejected by server.";
       if (isMoveConflictError(message)) {
