@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { playerForClientId, type PlayerState } from "./game.ts";
+import { expireMatchIfNeeded } from "./match-expiry.ts";
 
 export type MatchAuthRow = {
   match_id: string;
@@ -19,6 +20,7 @@ export type MatchRow = {
   p2_joined: boolean;
   p1_end_ack: boolean;
   p2_end_ack: boolean;
+  created_at: string;
 };
 
 export async function loadMatch(
@@ -36,6 +38,10 @@ export async function loadMatch(
 
   if (matchError) return { match: null, auth: null, error: matchError.message };
   if (!match) return { match: null, auth: null, error: "Match not found" };
+
+  if (await expireMatchIfNeeded(supabase, match)) {
+    return { match: null, auth: null, error: "Match not found" };
+  }
 
   const { data: auth, error: authError } = await supabase
     .from("critical_mass_match_auth")

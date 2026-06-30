@@ -89,11 +89,6 @@ Deno.serve(async (req) => {
     updated_at: new Date().toISOString(),
   };
 
-  if (result.gameOver) {
-    updatePayload.p1_end_ack = false;
-    updatePayload.p2_end_ack = false;
-  }
-
   const { data: updated, error: updateError } = await supabase
     .from("critical_mass_matches")
     .update(updatePayload)

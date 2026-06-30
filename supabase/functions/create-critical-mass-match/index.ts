@@ -2,6 +2,7 @@ import {
   createInitialBoard,
   randomMatchId,
 } from "../_shared/game.ts";
+import { cleanupExpiredMatches } from "../_shared/match-expiry.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
 import { createServiceClient, matchPayload } from "../_shared/supabase.ts";
 
@@ -26,6 +27,7 @@ Deno.serve(async (req) => {
   }
 
   const supabase = createServiceClient();
+  await cleanupExpiredMatches(supabase);
   const board = createInitialBoard();
 
   for (let attempt = 0; attempt < 8; attempt++) {

@@ -1,5 +1,6 @@
 import { normalizeMatchId, State } from "../_shared/game.ts";
 import { loadMatch, roleForClient } from "../_shared/match-auth.ts";
+import { cleanupExpiredMatches } from "../_shared/match-expiry.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
 import { createServiceClient, matchPayload } from "../_shared/supabase.ts";
 
@@ -25,6 +26,7 @@ Deno.serve(async (req) => {
   if (!clientId) return errorResponse("clientId is required");
 
   const supabase = createServiceClient();
+  await cleanupExpiredMatches(supabase);
   const loaded = await loadMatch(supabase, matchId);
 
   if (loaded.error === "Match not found") {
