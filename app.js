@@ -1,18 +1,27 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
+import {
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY,
+  SUPABASE_ENABLED,
+} from "./config.js";
+import {
+  State,
+  BOARD_SIZE,
+  createInitialBoard,
+  cloneBoard,
+  getCriticalMass,
+} from "./js/game-logic.js";
+import {
+  getClientId,
+  createMultiplayerClient,
+  inviteUrl,
+} from "./js/multiplayer.js";
 
-const State = {
-  NULL: "NULL",
-  PLAYER1: "PLAYER1",
-  PLAYER2: "PLAYER2",
-};
-
-const BOARD_SIZE = 5;
 const BASE_BOARD_SIZE = 520;
 const MIN_BOARD_SIZE = 280;
 const ORB_DURATION = 220;
 const ORB_STAGGER = 40;
 const EMERGE_FRACTION = 0.22;
+const ERROR_REVERT_MS = 2200;
 
 const DIRECTIONS = [
   [-1, 0],
@@ -25,28 +34,51 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const boardWrap = document.querySelector(".board-wrap");
 const statusEl = document.getElementById("status");
+const statusTextEl = statusEl.querySelector(".turn-indicator__text");
 const restartBtn = document.getElementById("restart");
+const playLocalBtn = document.getElementById("play-local");
+const lobbySection = document.getElementById("lobby");
+const onlineDisabledEl = document.getElementById("online-disabled");
 const createMatchBtn = document.getElementById("create-match");
 const joinMatchBtn = document.getElementById("join-match");
 const matchCodeInput = document.getElementById("match-code");
 const matchInfoEl = document.getElementById("match-info");
+const copyInviteBtn = document.getElementById("copy-invite");
 const leaveMatchBtn = document.getElementById("leave-match");
 const leaveConfirmDialog = document.getElementById("leave-confirm");
 const leaveCancelBtn = document.getElementById("leave-cancel");
 const leaveConfirmBtn = document.getElementById("leave-confirm-btn");
 const legendP1El = document.getElementById("legend-p1");
 const legendP2El = document.getElementById("legend-p2");
-const INPUT_VERB = window.matchMedia("(pointer: coarse)").matches ? "tap" : "click";
+const INPUT_VERB = window.matchMedia("(pointer: coarse)").matches
+  ? "tap"
+  : "click";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
-const clientId = crypto.randomUUID();
+const clientId = getClientId();
+let supabase = null;
+let mp = null;
+
+if (SUPABASE_ENABLED) {
+  const { createClient } = await import(
+    "https://esm.sh/@supabase/supabase-js@2"
+  );
+  supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  mp = createMultiplayerClient(supabase);
+} else {
+  lobbySection.hidden = true;
+  onlineDisabledEl.hidden = false;
+}
 
 let onlineMode = false;
 let localPlayer = null;
 let matchId = null;
-let gameChannel = null;
+let matchChannel = null;
 let multiplayerConnected = false;
 let matchPaused = false;
+let moveIndex = 0;
+let lastAppliedMoveIndex = 0;
+let errorRevertTimer = null;
+let applyServerQueue = Promise.resolve();
 
 let boardPixelSize = BASE_BOARD_SIZE;
 let labelOffset = 36;
@@ -64,23 +96,6 @@ const COLORS = {
   label: "#8899aa",
 };
 
-class Tile {
-  constructor(state, val) {
-    this.state = state;
-    this.val = state === State.NULL ? 0 : val;
-  }
-
-  addValue(newOwner) {
-    this.state = newOwner;
-    this.val++;
-  }
-
-  reset() {
-    this.state = State.NULL;
-    this.val = 0;
-  }
-}
-
 let board;
 let turn;
 let gameOver;
@@ -88,26 +103,14 @@ let animating = false;
 let animGeneration = 0;
 let overlay = null;
 
-function playerName(player) {
-  if (!onlineMode) return player === State.PLAYER1 ? "Player 1" : "Player 2";
-  if (player === localPlayer) return "You";
-  return "Opponent";
-}
-
 function normalizeMatchId(code) {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-function randomMatchId() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from(
-    { length: 6 },
-    () => chars[Math.floor(Math.random() * chars.length)]
-  ).join("");
-}
-
-function channelName(id) {
-  return `match_room_${normalizeMatchId(id).toLowerCase()}`;
+function playerName(player) {
+  if (!onlineMode) return player === State.PLAYER1 ? "Player 1" : "Player 2";
+  if (player === localPlayer) return "You";
+  return "Opponent";
 }
 
 function updateMatchUrl() {
@@ -135,11 +138,23 @@ function updateLegendLabels() {
     : "Player 2";
 }
 
-function setMatchInfo(text, { connected = false, disconnected = false } = {}) {
-  matchInfoEl.hidden = !text;
+function setMatchInfo(message, { connected = false, disconnected = false } = {}) {
+  matchInfoEl.hidden = !message;
   matchInfoEl.classList.toggle("connected", connected);
   matchInfoEl.classList.toggle("disconnected", disconnected);
-  matchInfoEl.innerHTML = text;
+  matchInfoEl.textContent = message;
+}
+
+function setMatchInfoWithCode(code, suffix, options = {}) {
+  matchInfoEl.hidden = false;
+  matchInfoEl.classList.toggle("connected", options.connected ?? false);
+  matchInfoEl.classList.toggle("disconnected", options.disconnected ?? false);
+  matchInfoEl.replaceChildren();
+  matchInfoEl.append("Match ");
+  const strong = document.createElement("strong");
+  strong.textContent = code;
+  matchInfoEl.append(strong);
+  if (suffix) matchInfoEl.append(suffix);
 }
 
 function setLobbyControls(inMatch) {
@@ -147,218 +162,20 @@ function setLobbyControls(inMatch) {
   joinMatchBtn.hidden = inMatch;
   matchCodeInput.hidden = inMatch;
   leaveMatchBtn.hidden = !inMatch;
-}
-
-async function leaveOnlineMatch() {
-  if (gameChannel) {
-    await supabase.removeChannel(gameChannel);
-    gameChannel = null;
-  }
-
-  onlineMode = false;
-  localPlayer = null;
-  matchId = null;
-  multiplayerConnected = false;
-  matchPaused = false;
-  setLobbyControls(false);
-  setMatchInfo("");
-  updateMatchUrl();
-  updateLegendLabels();
-
-  animGeneration++;
-  animating = false;
-  overlay = null;
-  initializeBoard();
-  restartBtn.hidden = true;
-  updateTurnStatus();
-  drawBoard();
-}
-
-function requestLeaveMatch() {
-  leaveConfirmDialog.showModal();
-}
-
-async function confirmLeaveMatch() {
-  leaveConfirmDialog.close();
-
-  if (onlineMode && gameChannel) {
-    await gameChannel.send({
-      type: "broadcast",
-      event: "player-left",
-      payload: { clientId },
-    });
-  }
-
-  await leaveOnlineMatch();
-}
-
-function setPausedStatus(message) {
-  statusEl.className = "paused";
-  statusEl.innerHTML = `
-    <span class="turn-indicator__dot" aria-hidden="true"></span>
-    <span class="turn-indicator__text">${message}</span>
-  `;
-}
-
-function handleOpponentLeft() {
-  matchPaused = true;
-  multiplayerConnected = false;
-  restartBtn.hidden = true;
-  setMatchInfo(`Match <strong>${matchId}</strong>`, { disconnected: true });
-  setPausedStatus("Opponent left the match");
-  drawBoard();
-}
-
-function applyMoveToLocalState(actionData) {
-  const { r, c } = actionData;
-  if (gameOver || animating) return;
-  if (board[r][c].state !== turn) return;
-
-  const gen = ++animGeneration;
-  animating = true;
-  setTurnStatus(turn, { busy: true, message: "Chain reaction…" });
-
-  board[r][c].addValue(turn);
-  drawBoard();
-
-  processExplosionAt(r, c, gen).then(() => {
-    if (gen !== animGeneration) return;
-
-    checkWinCondition();
-
-    if (!gameOver) {
-      turn = turn === State.PLAYER1 ? State.PLAYER2 : State.PLAYER1;
-      updateTurnStatus();
-    }
-
-    animating = false;
-    drawBoard();
-  });
-}
-
-function handlePlayerAction(actionData) {
-  applyMoveToLocalState(actionData);
-
-  if (onlineMode && gameChannel) {
-    gameChannel.send({
-      type: "broadcast",
-      event: "game-move",
-      payload: actionData,
-    });
-  }
-}
-
-async function subscribeToMatch(id, role) {
-  const normalizedId = normalizeMatchId(id);
-  if (!normalizedId) return;
-
-  if (gameChannel) {
-    await supabase.removeChannel(gameChannel);
-    gameChannel = null;
-  }
-
-  onlineMode = true;
-  matchId = normalizedId;
-  localPlayer = role;
-  multiplayerConnected = false;
-  matchPaused = false;
-
-  setLobbyControls(true);
-  updateLegendLabels();
-  updateMatchUrl();
-  setMatchInfo(
-    `Match <strong>${matchId}</strong> — connecting as ${playerName(localPlayer)}…`
-  );
-
-  animGeneration++;
-  animating = false;
-  overlay = null;
-  initializeBoard();
-  restartBtn.hidden = true;
-  updateTurnStatus();
-  drawBoard();
-
-  gameChannel = supabase.channel(channelName(matchId));
-
-  gameChannel
-    .on("broadcast", { event: "game-move" }, ({ payload }) => {
-      if (!payload || payload.clientId === clientId) return;
-      applyMoveToLocalState(payload);
-    })
-    .on("broadcast", { event: "game-restart" }, ({ payload }) => {
-      if (!payload || payload.clientId === clientId) return;
-      animGeneration++;
-      animating = false;
-      overlay = null;
-      initializeBoard();
-      restartBtn.hidden = true;
-      updateTurnStatus();
-      drawBoard();
-    })
-    .on("broadcast", { event: "player-left" }, ({ payload }) => {
-      if (!payload || payload.clientId === clientId) return;
-      handleOpponentLeft();
-    })
-    .subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        multiplayerConnected = true;
-        setMatchInfo(
-          `Match <strong>${matchId}</strong> — connected as ${playerName(localPlayer)}`,
-          { connected: true }
-        );
-        updateTurnStatus();
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        multiplayerConnected = false;
-        setMatchInfo(
-          `Match <strong>${matchId}</strong> — connection lost. Try leaving and rejoining.`
-        );
-      }
-    });
-}
-
-function createMatch() {
-  subscribeToMatch(randomMatchId(), State.PLAYER1);
-}
-
-function joinMatch() {
-  const code = normalizeMatchId(matchCodeInput.value);
-  if (!code) {
-    setMatchInfo("Enter a match code to join.");
-    return;
-  }
-  subscribeToMatch(code, State.PLAYER2);
+  copyInviteBtn.hidden = !inMatch || localPlayer !== State.PLAYER1;
 }
 
 function initializeBoard() {
-  board = Array.from({ length: BOARD_SIZE }, () =>
-    Array.from({ length: BOARD_SIZE }, () => new Tile(State.NULL, 0))
-  );
-
-  board[0][0] = new Tile(State.PLAYER1, 1);
-
-  const last = BOARD_SIZE - 1;
-  board[last][last] = new Tile(State.PLAYER2, 1);
-
+  board = createInitialBoard();
   turn = State.PLAYER1;
   gameOver = false;
   overlay = null;
+  moveIndex = 0;
+  lastAppliedMoveIndex = 0;
 }
 
-function getCriticalMass(r, c) {
-  const maxRows = BOARD_SIZE - 1;
-  const maxCols = BOARD_SIZE - 1;
-
-  const isCorner =
-    (r === 0 && c === 0) ||
-    (r === 0 && c === maxCols) ||
-    (r === maxRows && c === 0) ||
-    (r === maxRows && c === maxCols);
-  if (isCorner) return 2;
-
-  const isEdge = r === 0 || c === 0 || r === maxRows || c === maxCols;
-  if (isEdge) return 3;
-
-  return 4;
+function hydrateBoardFromServer(serverBoard) {
+  board = cloneBoard(serverBoard);
 }
 
 function checkWinCondition() {
@@ -382,7 +199,7 @@ function checkWinCondition() {
       : "GAME OVER! Player 2 wins!";
     setStatus(text, "win-p2");
     gameOver = true;
-    restartBtn.hidden = false;
+    restartBtn.hidden = onlineMode && matchPaused;
     return true;
   }
 
@@ -394,11 +211,323 @@ function checkWinCondition() {
       : "GAME OVER! Player 1 wins!";
     setStatus(text, "win-p1");
     gameOver = true;
-    restartBtn.hidden = false;
+    restartBtn.hidden = onlineMode && matchPaused;
     return true;
   }
 
   return false;
+}
+
+function applyServerMatchRow(row, { animate = false } = {}) {
+  applyServerQueue = applyServerQueue.then(() =>
+    _applyServerMatchRow(row, { animate })
+  );
+  return applyServerQueue;
+}
+
+async function _applyServerMatchRow(row, { animate = false } = {}) {
+  const nextMoveIndex = row.move_index ?? 0;
+  const lastMove = row.last_move;
+  const mover =
+    nextMoveIndex > 0
+      ? row.turn === State.PLAYER1
+        ? State.PLAYER2
+        : State.PLAYER1
+      : null;
+
+  if (nextMoveIndex <= lastAppliedMoveIndex) {
+    hydrateBoardFromServer(row.board);
+    turn = row.turn;
+    moveIndex = nextMoveIndex;
+    gameOver = row.game_over;
+    if (gameOver) {
+      showWinFromServer(row.winner);
+      restartBtn.hidden = matchPaused;
+    }
+    drawBoard();
+    return;
+  }
+
+  if (
+    animate &&
+    lastMove &&
+    nextMoveIndex === lastAppliedMoveIndex + 1 &&
+    mover
+  ) {
+    await animateMove(lastMove.r, lastMove.c, mover);
+    hydrateBoardFromServer(row.board);
+    turn = row.turn;
+    moveIndex = nextMoveIndex;
+    lastAppliedMoveIndex = nextMoveIndex;
+    gameOver = row.game_over;
+    if (gameOver) {
+      showWinFromServer(row.winner);
+      restartBtn.hidden = matchPaused;
+    } else {
+      updateTurnStatus();
+    }
+    drawBoard();
+    return;
+  }
+
+  hydrateBoardFromServer(row.board);
+  turn = row.turn;
+  moveIndex = nextMoveIndex;
+  lastAppliedMoveIndex = nextMoveIndex;
+  gameOver = row.game_over;
+  if (gameOver) {
+    showWinFromServer(row.winner);
+    restartBtn.hidden = matchPaused;
+  } else {
+    updateTurnStatus();
+  }
+  drawBoard();
+}
+
+function showWinFromServer(winner) {
+  if (winner === State.PLAYER1) {
+    const text = onlineMode
+      ? localPlayer === State.PLAYER1
+        ? "You win!"
+        : "Opponent wins!"
+      : "GAME OVER! Player 1 wins!";
+    setStatus(text, "win-p1");
+  } else if (winner === State.PLAYER2) {
+    const text = onlineMode
+      ? localPlayer === State.PLAYER2
+        ? "You win!"
+        : "Opponent wins!"
+      : "GAME OVER! Player 2 wins!";
+    setStatus(text, "win-p2");
+  }
+  restartBtn.hidden = matchPaused;
+}
+
+async function teardownOnlineMatch() {
+  if (matchChannel) {
+    await mp.unsubscribe(matchChannel);
+    matchChannel = null;
+  }
+}
+
+async function leaveOnlineMatch() {
+  if (onlineMode && matchId && mp) {
+    try {
+      await mp.leaveMatch(matchId, clientId);
+    } catch {
+      // Best-effort leave
+    }
+  }
+
+  await teardownOnlineMatch();
+
+  onlineMode = false;
+  localPlayer = null;
+  matchId = null;
+  multiplayerConnected = false;
+  matchPaused = false;
+  setLobbyControls(false);
+  setMatchInfo("");
+  updateMatchUrl();
+  updateLegendLabels();
+
+  animGeneration++;
+  animating = false;
+  overlay = null;
+  initializeBoard();
+  restartBtn.hidden = true;
+  playLocalBtn.hidden = true;
+  updateTurnStatus();
+  drawBoard();
+}
+
+function requestLeaveMatch() {
+  leaveConfirmDialog.showModal();
+}
+
+async function confirmLeaveMatch() {
+  leaveConfirmDialog.close();
+  await leaveOnlineMatch();
+}
+
+function handleOpponentLeft() {
+  matchPaused = true;
+  multiplayerConnected = false;
+  restartBtn.hidden = true;
+  playLocalBtn.hidden = false;
+  setMatchInfoWithCode(matchId, "", { disconnected: true });
+  setPausedStatus("Opponent left the match");
+  drawBoard();
+}
+
+async function startLocalFromPaused() {
+  matchPaused = false;
+  playLocalBtn.hidden = true;
+  onlineMode = false;
+  localPlayer = null;
+  matchId = null;
+  setLobbyControls(false);
+  setMatchInfo("");
+  updateMatchUrl();
+  updateLegendLabels();
+  animGeneration++;
+  animating = false;
+  overlay = null;
+  initializeBoard();
+  restartBtn.hidden = true;
+  updateTurnStatus();
+  drawBoard();
+  await teardownOnlineMatch();
+}
+
+async function connectToMatch(row, role) {
+  matchId = row.matchId ?? row.id;
+  localPlayer = role;
+  onlineMode = true;
+  matchPaused = row.status === "abandoned";
+  multiplayerConnected = false;
+
+  setLobbyControls(true);
+  updateLegendLabels();
+  updateMatchUrl();
+
+  animGeneration++;
+  animating = false;
+  overlay = null;
+  restartBtn.hidden = true;
+  playLocalBtn.hidden = true;
+
+  await applyServerMatchRow(row, { animate: false });
+  lastAppliedMoveIndex = row.move_index ?? 0;
+  moveIndex = lastAppliedMoveIndex;
+
+  if (matchPaused) {
+    handleOpponentLeft();
+    return;
+  }
+
+  updateTurnStatus();
+  drawBoard();
+
+  if (matchChannel) await mp.unsubscribe(matchChannel);
+
+  matchChannel = mp.subscribeToMatch(matchId, (updatedRow) => {
+    onMatchRowUpdated(updatedRow);
+  });
+
+  multiplayerConnected = true;
+  const waiting = row.status === "waiting";
+  setMatchInfoWithCode(
+    matchId,
+    waiting
+      ? " — waiting for opponent…"
+      : ` — connected as ${playerName(localPlayer)}`,
+    { connected: !waiting }
+  );
+}
+
+async function onMatchRowUpdated(row) {
+  if (!onlineMode || row.id !== matchId) return;
+
+  if (row.status === "abandoned" && !matchPaused) {
+    const opponentGone =
+      (localPlayer === State.PLAYER1 && !row.p2_client_id) ||
+      (localPlayer === State.PLAYER2 && !row.p1_client_id);
+    if (opponentGone) {
+      handleOpponentLeft();
+      return;
+    }
+  }
+
+  if (row.status === "active" && matchPaused) {
+    matchPaused = false;
+    playLocalBtn.hidden = true;
+    setMatchInfoWithCode(matchId, ` — connected as ${playerName(localPlayer)}`, {
+      connected: true,
+    });
+  }
+
+  if (
+    row.status === "active" &&
+    row.p2_client_id &&
+    localPlayer === State.PLAYER1 &&
+    !matchPaused &&
+    matchInfoEl.textContent.includes("waiting")
+  ) {
+    setMatchInfoWithCode(matchId, ` — connected as ${playerName(localPlayer)}`, {
+      connected: true,
+    });
+    updateTurnStatus();
+  }
+
+  if (row.move_index === 0 && lastAppliedMoveIndex > 0) {
+    animGeneration++;
+    animating = false;
+    overlay = null;
+    gameOver = false;
+    restartBtn.hidden = true;
+  }
+
+  const isRemoteMove = row.move_index > lastAppliedMoveIndex;
+  await applyServerMatchRow(row, { animate: isRemoteMove && !animating });
+}
+
+async function createMatch() {
+  if (!mp) return;
+  createMatchBtn.disabled = true;
+  try {
+    const data = await mp.createMatch(clientId);
+    await connectToMatch(data, State.PLAYER1);
+  } catch (err) {
+    setMatchInfo(err.message || "Could not create match.");
+  } finally {
+    createMatchBtn.disabled = false;
+  }
+}
+
+async function joinMatch(codeOverride) {
+  if (!mp) return;
+  const code = normalizeMatchId(codeOverride ?? matchCodeInput.value);
+  if (!code) {
+    setMatchInfo("Enter a match code to join.");
+    return;
+  }
+
+  joinMatchBtn.disabled = true;
+  try {
+    const data = await mp.joinMatch(code, clientId);
+    await connectToMatch(data, data.role);
+  } catch (err) {
+    setMatchInfo(err.message || "Could not join match.");
+  } finally {
+    joinMatchBtn.disabled = false;
+  }
+}
+
+async function copyInviteLink() {
+  if (!matchId) return;
+  const url = inviteUrl(matchId);
+  try {
+    await navigator.clipboard.writeText(url);
+    const prev = copyInviteBtn.textContent;
+    copyInviteBtn.textContent = "Copied!";
+    setTimeout(() => {
+      copyInviteBtn.textContent = prev;
+    }, 1600);
+  } catch {
+    setMatchInfo("Could not copy link — copy the match code manually.");
+  }
+}
+
+function validNeighbors(r, c) {
+  const neighbors = [];
+  for (const [dr, dc] of DIRECTIONS) {
+    const nr = r + dr;
+    const nc = c + dc;
+    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+    neighbors.push({ nr, nc });
+  }
+  return neighbors;
 }
 
 function smoothstep(t) {
@@ -443,14 +572,12 @@ function dotOffsets(count) {
   const layout = DOT_LAYOUT[Math.min(count, 4)] || DOT_LAYOUT[4];
   const spread = cellSize * 0.28;
   const offsets = [];
-
   for (let i = 0; i < count; i++) {
     const [ox, oy] = layout[i % layout.length];
     const extra = Math.floor(i / layout.length);
     const jitter = extra * 3 * boardScale();
     offsets.push({ x: ox * spread + jitter, y: oy * spread });
   }
-
   return offsets;
 }
 
@@ -473,19 +600,6 @@ function resizeBoard() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   if (board) drawBoard();
-}
-
-function validNeighbors(r, c) {
-  const neighbors = [];
-
-  for (const [dr, dc] of DIRECTIONS) {
-    const nr = r + dr;
-    const nc = c + dc;
-    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
-    neighbors.push({ nr, nc, dr, dc });
-  }
-
-  return neighbors;
 }
 
 function easeOutBack(t) {
@@ -535,10 +649,12 @@ async function animateSplitOrbs(fromR, fromC, neighbors, owner, gen) {
   await waitFrames(totalDuration, gen, (_, elapsedT) => {
     const elapsedMs = elapsedT * totalDuration;
     const orbs = neighbors.map((_, i) => {
-      const localT = Math.min(1, Math.max(0, (elapsedMs - i * ORB_STAGGER) / ORB_DURATION));
+      const localT = Math.min(
+        1,
+        Math.max(0, (elapsedMs - i * ORB_STAGGER) / ORB_DURATION)
+      );
       const { posT, scale, alpha } = orbMotion(localT);
       const target = targets[i];
-
       return {
         x: from.x + (target.x - from.x) * posT,
         y: from.y + (target.y - from.y) * posT,
@@ -547,7 +663,6 @@ async function animateSplitOrbs(fromR, fromC, neighbors, owner, gen) {
         alpha,
       };
     });
-
     overlay = { orbs };
   });
 
@@ -564,64 +679,126 @@ function orbMotion(localT) {
   }
 
   const travelT = (localT - EMERGE_FRACTION) / (1 - EMERGE_FRACTION);
-  const eased = smoothstep(travelT);
-  return { posT: eased, scale: 1, alpha: 1 };
+  return { posT: smoothstep(travelT), scale: 1, alpha: 1 };
 }
 
-async function processExplosionAt(r, c, gen) {
+async function processExplosionAt(r, c, gen, actingPlayer) {
   if (gameOver || gen !== animGeneration) return;
 
   const capacity = getCriticalMass(r, c);
   if (board[r][c].val < capacity) return;
 
   const neighbors = validNeighbors(r, c);
-
-  board[r][c].reset();
+  board[r][c] = { state: State.NULL, val: 0 };
   drawBoard();
 
-  await animateSplitOrbs(r, c, neighbors, turn, gen);
+  await animateSplitOrbs(r, c, neighbors, actingPlayer, gen);
   if (gen !== animGeneration || gameOver) return;
 
   for (const { nr, nc } of neighbors) {
-    board[nr][nc].addValue(turn);
+    const tile = board[nr][nc];
+    board[nr][nc] = { state: actingPlayer, val: tile.val + 1 };
   }
   drawBoard();
 
   if (checkWinCondition()) return;
 
   for (const { nr, nc } of neighbors) {
-    await processExplosionAt(nr, nc, gen);
+    await processExplosionAt(nr, nc, gen, actingPlayer);
     if (gen !== animGeneration || gameOver) return;
   }
 }
 
+function animateMove(r, c, actingPlayer) {
+  if (gameOver || animating) return Promise.resolve();
+
+  const gen = ++animGeneration;
+  animating = true;
+  setTurnStatus(actingPlayer, { busy: true, message: "Chain reaction…" });
+
+  const tile = board[r][c];
+  board[r][c] = { state: actingPlayer, val: tile.val + 1 };
+  drawBoard();
+
+  return processExplosionAt(r, c, gen, actingPlayer).then(() => {
+    if (gen !== animGeneration) return;
+
+    animating = false;
+    drawBoard();
+  });
+}
+
+async function applyLocalMove(r, c) {
+  const actingPlayer = turn;
+  await animateMove(r, c, actingPlayer);
+
+  if (gameOver) return;
+
+  turn = turn === State.PLAYER1 ? State.PLAYER2 : State.PLAYER1;
+  updateTurnStatus();
+  drawBoard();
+}
+
 function setStatus(text, kind = "") {
+  if (errorRevertTimer) {
+    clearTimeout(errorRevertTimer);
+    errorRevertTimer = null;
+  }
   statusEl.className = kind;
-  statusEl.innerHTML = `<span class="turn-indicator__text">${text}</span>`;
+  statusTextEl.textContent = text;
+}
+
+function setPausedStatus(message) {
+  statusEl.className = "paused";
+  statusTextEl.textContent = message;
 }
 
 function setTurnStatus(player, { busy = false, message } = {}) {
+  if (errorRevertTimer) {
+    clearTimeout(errorRevertTimer);
+    errorRevertTimer = null;
+  }
+
   const isP1 = player === State.PLAYER1;
   const name = playerName(player);
   const turnClass = isP1 ? "turn-p1" : "turn-p2";
   const busyClass = busy ? " busy" : "";
-  let text = message;
+  statusEl.className = `${turnClass}${busyClass}`;
 
-  if (!text && onlineMode && matchPaused) {
-    text = "Opponent left the match";
-  } else if (!text && onlineMode && !multiplayerConnected) {
-    text = "Connecting to match…";
-  } else if (!text && onlineMode && player !== localPlayer && !gameOver) {
-    text = "Opponent's turn — waiting…";
-  } else if (!text) {
-    text = `<span class="turn-indicator__player">${name}</span>'s turn — ${INPUT_VERB} one of your tiles`;
+  if (message) {
+    statusTextEl.textContent = message;
+    return;
   }
 
-  statusEl.className = `${turnClass}${busyClass}`;
-  statusEl.innerHTML = `
-    <span class="turn-indicator__dot" aria-hidden="true"></span>
-    <span class="turn-indicator__text">${text}</span>
-  `;
+  if (onlineMode && matchPaused) {
+    statusTextEl.textContent = "Opponent left the match";
+    return;
+  }
+
+  if (onlineMode && !multiplayerConnected) {
+    statusTextEl.textContent = "Connecting to match…";
+    return;
+  }
+
+  if (onlineMode && player !== localPlayer && !gameOver) {
+    statusTextEl.textContent = "Opponent's turn — waiting…";
+    return;
+  }
+
+  statusTextEl.replaceChildren();
+  const playerSpan = document.createElement("span");
+  playerSpan.className = "turn-indicator__player";
+  playerSpan.textContent = name;
+  statusTextEl.append(playerSpan, `'s turn — ${INPUT_VERB} one of your tiles`);
+}
+
+function showErrorStatus(message) {
+  setStatus(message, "error");
+  if (errorRevertTimer) clearTimeout(errorRevertTimer);
+  errorRevertTimer = setTimeout(() => {
+    errorRevertTimer = null;
+    if (!gameOver && !matchPaused) updateTurnStatus();
+  }, ERROR_REVERT_MS);
 }
 
 function updateTurnStatus({ busy = false } = {}) {
@@ -760,7 +937,11 @@ function drawBoard() {
     ctx.fillRect(boardLeft, boardTop, boardW, boardH);
   }
 
-  canvas.style.cursor = animating ? "wait" : matchPaused ? "not-allowed" : "pointer";
+  canvas.style.cursor = animating
+    ? "wait"
+    : matchPaused
+      ? "not-allowed"
+      : "pointer";
 }
 
 async function tryMove(r, c) {
@@ -770,17 +951,36 @@ async function tryMove(r, c) {
   if (onlineMode && turn !== localPlayer) return;
 
   if (board[r][c].state !== turn) {
-    setStatus("You must select a tile you already own!", "error");
+    showErrorStatus("You must select a tile you already own!");
     return;
   }
 
-  const actionData = { r, c, clientId };
-
   if (onlineMode) {
-    handlePlayerAction(actionData);
-  } else {
-    applyMoveToLocalState(actionData);
+    try {
+      animating = true;
+      setTurnStatus(localPlayer, { busy: true, message: "Sending move…" });
+      const data = await mp.playMove(matchId, clientId, r, c, moveIndex);
+      await applyServerMatchRow(
+        {
+          id: matchId,
+          board: data.board,
+          turn: data.turn,
+          move_index: data.moveIndex,
+          game_over: data.gameOver,
+          winner: data.winner,
+          last_move: data.lastMove,
+          status: data.status,
+        },
+        { animate: true }
+      );
+    } catch (err) {
+      animating = false;
+      showErrorStatus(err.message || "Move rejected by server.");
+    }
+    return;
   }
+
+  await applyLocalMove(r, c);
 }
 
 function handleBoardPointer(e) {
@@ -797,6 +997,37 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 
 restartBtn.addEventListener("click", async () => {
+  if (onlineMode && mp && matchId) {
+    try {
+      restartBtn.disabled = true;
+      const data = await mp.restartMatch(matchId, clientId);
+      animGeneration++;
+      animating = false;
+      overlay = null;
+      gameOver = false;
+      restartBtn.hidden = true;
+      await applyServerMatchRow(
+        {
+          id: matchId,
+          board: data.board,
+          turn: data.turn,
+          move_index: data.moveIndex,
+          game_over: data.gameOver,
+          winner: data.winner,
+          last_move: null,
+          status: data.status,
+        },
+        { animate: false }
+      );
+      updateTurnStatus();
+    } catch (err) {
+      showErrorStatus(err.message || "Could not restart match.");
+    } finally {
+      restartBtn.disabled = false;
+    }
+    return;
+  }
+
   animGeneration++;
   animating = false;
   overlay = null;
@@ -804,21 +1035,15 @@ restartBtn.addEventListener("click", async () => {
   restartBtn.hidden = true;
   updateTurnStatus();
   drawBoard();
-
-  if (onlineMode && gameChannel) {
-    await gameChannel.send({
-      type: "broadcast",
-      event: "game-restart",
-      payload: { clientId },
-    });
-  }
 });
 
 createMatchBtn.addEventListener("click", createMatch);
-joinMatchBtn.addEventListener("click", joinMatch);
+joinMatchBtn.addEventListener("click", () => joinMatch());
+copyInviteBtn.addEventListener("click", copyInviteLink);
 leaveMatchBtn.addEventListener("click", requestLeaveMatch);
 leaveCancelBtn.addEventListener("click", () => leaveConfirmDialog.close());
 leaveConfirmBtn.addEventListener("click", confirmLeaveMatch);
+playLocalBtn.addEventListener("click", startLocalFromPaused);
 matchCodeInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") joinMatch();
 });
@@ -826,15 +1051,22 @@ matchCodeInput.addEventListener("keydown", (e) => {
 const urlParams = new URLSearchParams(window.location.search);
 const urlMatch = urlParams.get("match");
 const urlRole = urlParams.get("role");
-if (urlMatch) {
-  matchCodeInput.value = normalizeMatchId(urlMatch);
-  subscribeToMatch(
-    urlMatch,
-    urlRole === "p2" ? State.PLAYER2 : State.PLAYER1
-  );
-}
 
 initializeBoard();
 resizeBoard();
 updateTurnStatus();
 window.addEventListener("resize", resizeBoard);
+
+if (urlMatch && mp) {
+  matchCodeInput.value = normalizeMatchId(urlMatch);
+  if (urlRole === "p2") {
+    joinMatch(urlMatch);
+  } else if (urlRole === "p1") {
+    mp.joinMatch(normalizeMatchId(urlMatch), clientId)
+      .then((data) => connectToMatch(data, State.PLAYER1))
+      .catch((err) => setMatchInfo(err.message || "Could not rejoin match."));
+  } else {
+    setMatchInfo("Use the invite link from the match host to join as Player 2.");
+    matchCodeInput.value = normalizeMatchId(urlMatch);
+  }
+}

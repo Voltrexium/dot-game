@@ -5,6 +5,10 @@
     "config": "node scripts/generate-config.mjs",
     "build": "npm run config",
     "prestart": "npm run config",
-    "start": "npx --yes serve ."
+    "start": "serve .",
+    "dev": "npm run config && serve ."
+  },
+  "devDependencies": {
+    "serve": "^14.2.4"
   }
 }

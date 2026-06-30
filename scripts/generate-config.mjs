@@ -55,16 +55,18 @@ if (!supabaseUrl || !supabasePublishableKey) {
   }
 }
 
-if (!supabaseUrl || !supabasePublishableKey) {
-  throw new Error(
-    "Missing Supabase credentials. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY " +
-      "(or NEXT_PUBLIC_* equivalents) in the environment, or provide a local .env file."
+const enabled = Boolean(supabaseUrl && supabasePublishableKey);
+
+if (!enabled) {
+  console.warn(
+    "Supabase credentials not found — local hot-seat play works; online multiplayer is disabled."
   );
 }
 
 const contents = `export const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};
 export const SUPABASE_PUBLISHABLE_KEY = ${JSON.stringify(supabasePublishableKey)};
+export const SUPABASE_ENABLED = ${enabled};
 `;
 
 writeFileSync(outPath, contents, "utf8");
-console.log(`Wrote ${outPath}`);
+console.log(`Wrote ${outPath}${enabled ? "" : " (offline-only mode)"}`);

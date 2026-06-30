@@ -265,6 +265,26 @@
       flex-wrap: wrap;
     }
 
+    .lobby-row--secondary {
+      justify-content: center;
+    }
+
+    .online-disabled {
+      max-width: 420px;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: #9aa8c4;
+      text-align: center;
+      padding: 0.75rem 1rem;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 8px;
+    }
+
+    .online-disabled code {
+      color: #7dcea0;
+      font-size: 0.8rem;
+    }
+
     .lobby input {
       flex: 1;
       min-width: 8rem;
@@ -434,9 +454,16 @@
       <input id="match-code" type="text" maxlength="8" placeholder="Match code" autocomplete="off" spellcheck="false">
       <button id="join-match" type="button" class="secondary">Join</button>
     </div>
+    <div class="lobby-row lobby-row--secondary">
+      <button id="copy-invite" type="button" class="secondary" hidden>Copy invite link</button>
+    </div>
     <p id="match-info" class="match-info" hidden></p>
     <button id="leave-match" type="button" class="secondary" hidden>Leave online match</button>
   </section>
+
+  <p id="online-disabled" class="online-disabled" hidden>
+    Online play is unavailable — add Supabase credentials to <code>.env</code> to enable multiplayer. Local two-player still works below.
+  </p>
 
   <div class="legend">
     <span><span class="swatch p1"></span> <span id="legend-p1">Player 1</span></span>
@@ -453,6 +480,7 @@
   </div>
 
   <button id="restart" type="button" hidden>New Game</button>
+  <button id="play-local" type="button" class="secondary" hidden>Play locally</button>
 
   <p class="instructions">
     Tap or click your own tile to add a dot. Tiles explode at critical mass:
