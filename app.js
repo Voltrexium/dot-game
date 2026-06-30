@@ -1,3 +1,6 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
+
 const State = {
   NULL: "NULL",
   PLAYER1: "PLAYER1",
@@ -23,7 +26,24 @@ const ctx = canvas.getContext("2d");
 const boardWrap = document.querySelector(".board-wrap");
 const statusEl = document.getElementById("status");
 const restartBtn = document.getElementById("restart");
+const lobbyEl = document.getElementById("lobby");
+const createMatchBtn = document.getElementById("create-match");
+const joinMatchBtn = document.getElementById("join-match");
+const matchCodeInput = document.getElementById("match-code");
+const matchInfoEl = document.getElementById("match-info");
+const leaveMatchBtn = document.getElementById("leave-match");
+const legendP1El = document.getElementById("legend-p1");
+const legendP2El = document.getElementById("legend-p2");
 const INPUT_VERB = window.matchMedia("(pointer: coarse)").matches ? "tap" : "click";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const clientId = crypto.randomUUID();
+
+let onlineMode = false;
+let localPlayer = null;
+let matchId = null;
+let gameChannel = null;
+let multiplayerConnected = false;
 
 let boardPixelSize = BASE_BOARD_SIZE;
 let labelOffset = 36;
@@ -64,6 +84,205 @@ let gameOver;
 let animating = false;
 let animGeneration = 0;
 let overlay = null;
+
+function playerName(player) {
+  if (!onlineMode) return player === State.PLAYER1 ? "Player 1" : "Player 2";
+  if (player === localPlayer) return "You";
+  return "Opponent";
+}
+
+function normalizeMatchId(code) {
+  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function randomMatchId() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from(
+    { length: 6 },
+    () => chars[Math.floor(Math.random() * chars.length)]
+  ).join("");
+}
+
+function channelName(id) {
+  return `match_room_${normalizeMatchId(id).toLowerCase()}`;
+}
+
+function updateMatchUrl() {
+  const url = new URL(window.location.href);
+  if (onlineMode && matchId) {
+    url.searchParams.set("match", matchId);
+    url.searchParams.set("role", localPlayer === State.PLAYER1 ? "p1" : "p2");
+  } else {
+    url.searchParams.delete("match");
+    url.searchParams.delete("role");
+  }
+  window.history.replaceState({}, "", url);
+}
+
+function updateLegendLabels() {
+  legendP1El.textContent = onlineMode
+    ? localPlayer === State.PLAYER1
+      ? "You"
+      : "Opponent"
+    : "Player 1";
+  legendP2El.textContent = onlineMode
+    ? localPlayer === State.PLAYER2
+      ? "You"
+      : "Opponent"
+    : "Player 2";
+}
+
+function setMatchInfo(text, { connected = false } = {}) {
+  matchInfoEl.hidden = !text;
+  matchInfoEl.classList.toggle("connected", connected);
+  matchInfoEl.innerHTML = text;
+}
+
+function setLobbyControls(inMatch) {
+  createMatchBtn.hidden = inMatch;
+  joinMatchBtn.hidden = inMatch;
+  matchCodeInput.hidden = inMatch;
+  leaveMatchBtn.hidden = !inMatch;
+}
+
+async function leaveOnlineMatch() {
+  if (gameChannel) {
+    await supabase.removeChannel(gameChannel);
+    gameChannel = null;
+  }
+
+  onlineMode = false;
+  localPlayer = null;
+  matchId = null;
+  multiplayerConnected = false;
+  setLobbyControls(false);
+  setMatchInfo("");
+  updateMatchUrl();
+  updateLegendLabels();
+
+  animGeneration++;
+  animating = false;
+  overlay = null;
+  initializeBoard();
+  restartBtn.hidden = true;
+  updateTurnStatus();
+  drawBoard();
+}
+
+function applyMoveToLocalState(actionData) {
+  const { r, c } = actionData;
+  if (gameOver || animating) return;
+  if (board[r][c].state !== turn) return;
+
+  const gen = ++animGeneration;
+  animating = true;
+  setTurnStatus(turn, { busy: true, message: "Chain reaction…" });
+
+  board[r][c].addValue(turn);
+  drawBoard();
+
+  processExplosionAt(r, c, gen).then(() => {
+    if (gen !== animGeneration) return;
+
+    checkWinCondition();
+
+    if (!gameOver) {
+      turn = turn === State.PLAYER1 ? State.PLAYER2 : State.PLAYER1;
+      updateTurnStatus();
+    }
+
+    animating = false;
+    drawBoard();
+  });
+}
+
+function handlePlayerAction(actionData) {
+  applyMoveToLocalState(actionData);
+
+  if (onlineMode && gameChannel) {
+    gameChannel.send({
+      type: "broadcast",
+      event: "game-move",
+      payload: actionData,
+    });
+  }
+}
+
+async function subscribeToMatch(id, role) {
+  const normalizedId = normalizeMatchId(id);
+  if (!normalizedId) return;
+
+  if (gameChannel) {
+    await supabase.removeChannel(gameChannel);
+    gameChannel = null;
+  }
+
+  onlineMode = true;
+  matchId = normalizedId;
+  localPlayer = role;
+  multiplayerConnected = false;
+
+  setLobbyControls(true);
+  updateLegendLabels();
+  updateMatchUrl();
+  setMatchInfo(
+    `Match <strong>${matchId}</strong> — connecting as ${playerName(localPlayer)}…`
+  );
+
+  animGeneration++;
+  animating = false;
+  overlay = null;
+  initializeBoard();
+  restartBtn.hidden = true;
+  updateTurnStatus();
+  drawBoard();
+
+  gameChannel = supabase.channel(channelName(matchId));
+
+  gameChannel
+    .on("broadcast", { event: "game-move" }, ({ payload }) => {
+      if (!payload || payload.clientId === clientId) return;
+      applyMoveToLocalState(payload);
+    })
+    .on("broadcast", { event: "game-restart" }, ({ payload }) => {
+      if (!payload || payload.clientId === clientId) return;
+      animGeneration++;
+      animating = false;
+      overlay = null;
+      initializeBoard();
+      restartBtn.hidden = true;
+      updateTurnStatus();
+      drawBoard();
+    })
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        multiplayerConnected = true;
+        setMatchInfo(
+          `Match <strong>${matchId}</strong> — connected as ${playerName(localPlayer)}`,
+          { connected: true }
+        );
+        updateTurnStatus();
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        multiplayerConnected = false;
+        setMatchInfo(
+          `Match <strong>${matchId}</strong> — connection lost. Try leaving and rejoining.`
+        );
+      }
+    });
+}
+
+function createMatch() {
+  subscribeToMatch(randomMatchId(), State.PLAYER1);
+}
+
+function joinMatch() {
+  const code = normalizeMatchId(matchCodeInput.value);
+  if (!code) {
+    setMatchInfo("Enter a match code to join.");
+    return;
+  }
+  subscribeToMatch(code, State.PLAYER2);
+}
 
 function initializeBoard() {
   board = Array.from({ length: BOARD_SIZE }, () =>
@@ -111,14 +330,24 @@ function checkWinCondition() {
   }
 
   if (!p1HasTiles) {
-    setStatus("GAME OVER! Player 2 wins!", "win-p2");
+    const text = onlineMode
+      ? localPlayer === State.PLAYER2
+        ? "You win!"
+        : "Opponent wins!"
+      : "GAME OVER! Player 2 wins!";
+    setStatus(text, "win-p2");
     gameOver = true;
     restartBtn.hidden = false;
     return true;
   }
 
   if (!p2HasTiles) {
-    setStatus("GAME OVER! Player 1 wins!", "win-p1");
+    const text = onlineMode
+      ? localPlayer === State.PLAYER1
+        ? "You win!"
+        : "Opponent wins!"
+      : "GAME OVER! Player 1 wins!";
+    setStatus(text, "win-p1");
     gameOver = true;
     restartBtn.hidden = false;
     return true;
@@ -328,12 +557,18 @@ function setStatus(text, kind = "") {
 
 function setTurnStatus(player, { busy = false, message } = {}) {
   const isP1 = player === State.PLAYER1;
-  const name = isP1 ? "Player 1" : "Player 2";
+  const name = playerName(player);
   const turnClass = isP1 ? "turn-p1" : "turn-p2";
   const busyClass = busy ? " busy" : "";
-  const text =
-    message ??
-    `<span class="turn-indicator__player">${name}</span>'s turn — ${INPUT_VERB} one of your tiles`;
+  let text = message;
+
+  if (!text && onlineMode && !multiplayerConnected) {
+    text = "Connecting to match…";
+  } else if (!text && onlineMode && player !== localPlayer && !gameOver) {
+    text = "Opponent's turn — waiting…";
+  } else if (!text) {
+    text = `<span class="turn-indicator__player">${name}</span>'s turn — ${INPUT_VERB} one of your tiles`;
+  }
 
   statusEl.className = `${turnClass}${busyClass}`;
   statusEl.innerHTML = `
@@ -469,31 +704,21 @@ function drawBoard() {
 
 async function tryMove(r, c) {
   if (gameOver || animating) return;
+  if (onlineMode && !multiplayerConnected) return;
+  if (onlineMode && turn !== localPlayer) return;
 
   if (board[r][c].state !== turn) {
     setStatus("You must select a tile you already own!", "error");
     return;
   }
 
-  const gen = ++animGeneration;
-  animating = true;
-  setTurnStatus(turn, { busy: true, message: "Chain reaction…" });
+  const actionData = { r, c, clientId };
 
-  board[r][c].addValue(turn);
-  drawBoard();
-
-  await processExplosionAt(r, c, gen);
-  if (gen !== animGeneration) return;
-
-  checkWinCondition();
-
-  if (!gameOver) {
-    turn = turn === State.PLAYER1 ? State.PLAYER2 : State.PLAYER1;
-    updateTurnStatus();
+  if (onlineMode) {
+    handlePlayerAction(actionData);
+  } else {
+    applyMoveToLocalState(actionData);
   }
-
-  animating = false;
-  drawBoard();
 }
 
 function handleBoardPointer(e) {
@@ -509,7 +734,7 @@ canvas.addEventListener("pointerdown", (e) => {
   handleBoardPointer(e);
 });
 
-restartBtn.addEventListener("click", () => {
+restartBtn.addEventListener("click", async () => {
   animGeneration++;
   animating = false;
   overlay = null;
@@ -517,7 +742,33 @@ restartBtn.addEventListener("click", () => {
   restartBtn.hidden = true;
   updateTurnStatus();
   drawBoard();
+
+  if (onlineMode && gameChannel) {
+    await gameChannel.send({
+      type: "broadcast",
+      event: "game-restart",
+      payload: { clientId },
+    });
+  }
 });
+
+createMatchBtn.addEventListener("click", createMatch);
+joinMatchBtn.addEventListener("click", joinMatch);
+leaveMatchBtn.addEventListener("click", leaveOnlineMatch);
+matchCodeInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") joinMatch();
+});
+
+const urlParams = new URLSearchParams(window.location.search);
+const urlMatch = urlParams.get("match");
+const urlRole = urlParams.get("role");
+if (urlMatch) {
+  matchCodeInput.value = normalizeMatchId(urlMatch);
+  subscribeToMatch(
+    urlMatch,
+    urlRole === "p2" ? State.PLAYER2 : State.PLAYER1
+  );
+}
 
 initializeBoard();
 resizeBoard();

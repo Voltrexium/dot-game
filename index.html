@@ -226,6 +226,79 @@
       cursor: default;
     }
 
+    button.secondary {
+      background: #2a3f5f;
+      color: #c8d4e8;
+    }
+
+    button.secondary:hover {
+      background: #354d72;
+    }
+
+    .lobby {
+      width: 100%;
+      max-width: 420px;
+      padding: 1rem 1.15rem;
+      background: #16213e;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .lobby h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #c8d4e8;
+    }
+
+    .lobby p {
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: #9aa8c4;
+    }
+
+    .lobby-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .lobby input {
+      flex: 1;
+      min-width: 8rem;
+      padding: 0.55rem 0.75rem;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      background: #0f3460;
+      color: #eee;
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .lobby input::placeholder {
+      text-transform: none;
+      letter-spacing: normal;
+      color: #6b7d99;
+    }
+
+    .match-info {
+      font-size: 0.9rem;
+      color: #aab;
+      text-align: center;
+    }
+
+    .match-info strong {
+      color: #4ecdc4;
+      letter-spacing: 0.1em;
+    }
+
+    .match-info.connected strong {
+      color: #7dcea0;
+    }
+
     @media (max-width: 600px) {
       .game-main {
         justify-content: flex-start;
@@ -272,9 +345,21 @@
   <main class="game-main">
   <h1>Critical Mass</h1>
 
+  <section id="lobby" class="lobby" aria-label="Online match">
+    <h2>Play online</h2>
+    <p>Create a match and share the code, or join with a friend's code.</p>
+    <div class="lobby-row">
+      <button id="create-match" type="button">Create match</button>
+      <input id="match-code" type="text" maxlength="8" placeholder="Match code" autocomplete="off" spellcheck="false">
+      <button id="join-match" type="button" class="secondary">Join</button>
+    </div>
+    <p id="match-info" class="match-info" hidden></p>
+    <button id="leave-match" type="button" class="secondary" hidden>Leave online match</button>
+  </section>
+
   <div class="legend">
-    <span><span class="swatch p1"></span> Player 1</span>
-    <span><span class="swatch p2"></span> Player 2</span>
+    <span><span class="swatch p1"></span> <span id="legend-p1">Player 1</span></span>
+    <span><span class="swatch p2"></span> <span id="legend-p2">Player 2</span></span>
   </div>
 
   <p id="status" class="turn-p1" role="status" aria-live="polite">
@@ -295,6 +380,6 @@
   </p>
   </main>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
