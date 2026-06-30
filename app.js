@@ -705,14 +705,56 @@ function dotOffsets(count) {
   return offsets;
 }
 
-function resizeBoard() {
+function isDesktopLayout() {
+  return window.matchMedia("(min-width: 601px)").matches;
+}
+
+function getMaxBoardPixelSize() {
   const styles = getComputedStyle(boardWrap);
   const padX =
     parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
-  const available = boardWrap.clientWidth - padX;
-  const max = Math.min(BASE_BOARD_SIZE, available);
+  const padY =
+    parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+  const maxByWidth = boardWrap.clientWidth - padX;
 
-  boardPixelSize = Math.max(MIN_BOARD_SIZE, max);
+  if (!isDesktopLayout()) {
+    return Math.min(BASE_BOARD_SIZE, maxByWidth);
+  }
+
+  const gameMain = document.querySelector(".game-main");
+  const mainStyles = getComputedStyle(gameMain);
+  const mainPadY =
+    parseFloat(mainStyles.paddingTop) + parseFloat(mainStyles.paddingBottom);
+  const gap = parseFloat(mainStyles.gap) || 0;
+
+  let siblingHeight = mainPadY + padY;
+  let visibleSiblings = 0;
+
+  for (const child of gameMain.children) {
+    if (child === boardWrap || child.hidden) continue;
+    if (getComputedStyle(child).display === "none") continue;
+    siblingHeight += child.offsetHeight;
+    visibleSiblings += 1;
+  }
+
+  const totalItems = visibleSiblings + 1;
+  if (totalItems > 1) {
+    siblingHeight += gap * (totalItems - 1);
+  }
+
+  const navHeight = document.querySelector(".site-nav").offsetHeight;
+  const maxByHeight = window.innerHeight - navHeight - siblingHeight;
+
+  return Math.min(BASE_BOARD_SIZE, maxByWidth, maxByHeight);
+}
+
+function resizeBoard() {
+  const max = getMaxBoardPixelSize();
+  const capped = Math.min(BASE_BOARD_SIZE, Math.floor(max));
+
+  boardPixelSize = isDesktopLayout()
+    ? Math.max(220, capped)
+    : Math.max(MIN_BOARD_SIZE, capped);
   labelOffset = Math.round(36 * boardScale());
   cellSize = (boardPixelSize - labelOffset) / BOARD_SIZE;
 
@@ -1186,6 +1228,13 @@ initializeBoard();
 resizeBoard();
 updateTurnStatus();
 window.addEventListener("resize", resizeBoard);
+
+const gameMain = document.querySelector(".game-main");
+const layoutObserver = new ResizeObserver(() => resizeBoard());
+layoutObserver.observe(document.querySelector(".site-nav"));
+for (const child of gameMain.children) {
+  if (child !== boardWrap) layoutObserver.observe(child);
+}
 
 if (urlMatch && mp) {
   matchCodeInput.value = normalizeMatchId(urlMatch);

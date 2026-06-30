@@ -11,8 +11,14 @@
       padding: 0;
     }
 
+    html,
+    body {
+      height: 100%;
+    }
+
     body {
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
       font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -398,6 +404,53 @@
 
     button.danger:hover {
       background: #e85a5a;
+    }
+
+    @media (min-width: 601px) {
+      html,
+      body {
+        overflow: hidden;
+      }
+
+      body {
+        height: 100vh;
+        height: 100dvh;
+        max-height: 100vh;
+        max-height: 100dvh;
+      }
+
+      .game-main {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        gap: 0.5rem;
+        padding: 0.5rem 1.5rem 0.75rem;
+      }
+
+      h1 {
+        font-size: 1.35rem;
+      }
+
+      .lobby {
+        gap: 0.55rem;
+        padding: 0.65rem 1rem;
+      }
+
+      .lobby > p:first-of-type {
+        display: none;
+      }
+
+      .instructions {
+        font-size: 0.78rem;
+        line-height: 1.35;
+        max-width: 520px;
+      }
+    }
+
+    @media (min-width: 601px) and (max-height: 780px) {
+      .instructions {
+        display: none;
+      }
     }
 
     @media (max-width: 600px) {
