@@ -102,6 +102,8 @@ let gameOver;
 let animating = false;
 let animGeneration = 0;
 let overlay = null;
+/** While set, realtime echoes of this move are deferred until the HTTP response. */
+let pendingOwnMove = null;
 
 function normalizeMatchId(code) {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -172,6 +174,7 @@ function initializeBoard() {
   overlay = null;
   moveIndex = 0;
   lastAppliedMoveIndex = 0;
+  pendingOwnMove = null;
 }
 
 function hydrateBoardFromServer(serverBoard) {
@@ -326,6 +329,7 @@ async function leaveOnlineMatch() {
   matchId = null;
   multiplayerConnected = false;
   matchPaused = false;
+  pendingOwnMove = null;
   setLobbyControls(false);
   setMatchInfo("");
   updateMatchUrl();
@@ -466,10 +470,49 @@ async function onMatchRowUpdated(row) {
     overlay = null;
     gameOver = false;
     restartBtn.hidden = true;
+    pendingOwnMove = null;
+  }
+
+  if (isPendingOwnMoveEcho(row)) {
+    return;
   }
 
   const isRemoteMove = row.move_index > lastAppliedMoveIndex;
   await applyServerMatchRow(row, { animate: isRemoteMove && !animating });
+}
+
+function isPendingOwnMoveEcho(row) {
+  if (!pendingOwnMove) return false;
+  const lastMove = row.last_move;
+  return (
+    row.move_index === pendingOwnMove.expectedIndex + 1 &&
+    lastMove?.r === pendingOwnMove.r &&
+    lastMove?.c === pendingOwnMove.c
+  );
+}
+
+function matchRowFromResponse(data) {
+  return {
+    id: data.matchId ?? matchId,
+    board: data.board,
+    turn: data.turn,
+    move_index: data.moveIndex,
+    game_over: data.gameOver,
+    winner: data.winner,
+    last_move: data.lastMove,
+    status: data.status,
+  };
+}
+
+function isMoveConflictError(message) {
+  return /stale move index|move already applied/i.test(message ?? "");
+}
+
+async function syncMatchFromServer({ animate = false } = {}) {
+  if (!mp || !matchId) return false;
+  const row = await mp.fetchMatchRow(matchId);
+  await applyServerMatchRow(row, { animate });
+  return true;
 }
 
 async function createMatch() {
@@ -956,26 +999,35 @@ async function tryMove(r, c) {
   }
 
   if (onlineMode) {
+    const expectedIndex = moveIndex;
+    pendingOwnMove = { expectedIndex, r, c };
+    const movePromise = mp.playMove(matchId, clientId, r, c, expectedIndex);
+
     try {
-      animating = true;
-      setTurnStatus(localPlayer, { busy: true, message: "Sending move…" });
-      const data = await mp.playMove(matchId, clientId, r, c, moveIndex);
-      await applyServerMatchRow(
-        {
-          id: matchId,
-          board: data.board,
-          turn: data.turn,
-          move_index: data.moveIndex,
-          game_over: data.gameOver,
-          winner: data.winner,
-          last_move: data.lastMove,
-          status: data.status,
-        },
-        { animate: true }
-      );
+      await animateMove(r, c, localPlayer);
+      const data = await movePromise;
+      pendingOwnMove = null;
+      await applyServerMatchRow(matchRowFromResponse(data), { animate: false });
     } catch (err) {
+      pendingOwnMove = null;
       animating = false;
-      showErrorStatus(err.message || "Move rejected by server.");
+
+      const message = err.message || "Move rejected by server.";
+      if (isMoveConflictError(message)) {
+        try {
+          await syncMatchFromServer();
+        } catch {
+          showErrorStatus(message);
+        }
+        return;
+      }
+
+      try {
+        await syncMatchFromServer();
+      } catch {
+        // Keep the server error if we cannot resync.
+      }
+      showErrorStatus(message);
     }
     return;
   }

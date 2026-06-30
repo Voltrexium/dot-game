@@ -66,6 +66,17 @@ export function createMultiplayerClient(supabase) {
       return invoke("restart-critical-mass-match", { matchId, clientId });
     },
 
+    async fetchMatchRow(matchId) {
+      const { data, error } = await supabase
+        .from("critical_mass_matches")
+        .select()
+        .eq("id", matchId)
+        .single();
+
+      if (error) throw new Error(error.message || "Could not load match state");
+      return data;
+    },
+
     subscribeToMatch(matchId, onUpdate) {
       const channel = supabase
         .channel(`match_state_${matchId}`)

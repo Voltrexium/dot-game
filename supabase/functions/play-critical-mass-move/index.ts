@@ -21,7 +21,6 @@ Deno.serve(async (req) => {
     clientId?: string;
     r?: number;
     c?: number;
-    expectedMoveIndex?: number;
   };
 
   try {
@@ -34,8 +33,6 @@ Deno.serve(async (req) => {
   const clientId = body.clientId?.trim();
   const r = body.r;
   const c = body.c;
-  const expectedMoveIndex = body.expectedMoveIndex;
-
   if (!matchId) return errorResponse("matchId is required");
   if (!clientId) return errorResponse("clientId is required");
   if (!Number.isInteger(r) || !Number.isInteger(c)) {
@@ -59,13 +56,6 @@ Deno.serve(async (req) => {
   const player = playerForClientId(match, clientId);
   if (!player) return errorResponse("You are not in this match", 403);
   if (match.turn !== player) return errorResponse("Not your turn", 409);
-
-  if (
-    expectedMoveIndex !== undefined &&
-    expectedMoveIndex !== match.move_index
-  ) {
-    return errorResponse("Stale move index", 409);
-  }
 
   const board = match.board as Tile[][];
   const result = applyMove(board, r!, c!, match.turn as typeof State.PLAYER1);
