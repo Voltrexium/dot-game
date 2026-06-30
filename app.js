@@ -105,6 +105,8 @@ let animGeneration = 0;
 let overlay = null;
 /** While set, realtime echoes of this move are deferred until the HTTP response. */
 let pendingOwnMove = null;
+/** Latest match row held while our move HTTP request is in flight. */
+let deferredMatchRow = null;
 
 function normalizeMatchId(code) {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -195,6 +197,7 @@ function initializeBoard() {
   moveIndex = 0;
   lastAppliedMoveIndex = 0;
   pendingOwnMove = null;
+  deferredMatchRow = null;
   matchActive = false;
 }
 
@@ -280,6 +283,8 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     } else if (row.game_over) {
       gameOver = true;
       showWinFromServer(row.winner);
+    } else if (!matchPaused) {
+      updateTurnStatus();
     }
 
     updateRestartButtonVisibility();
@@ -369,6 +374,7 @@ async function leaveOnlineMatch() {
   matchPaused = false;
   matchActive = false;
   pendingOwnMove = null;
+  deferredMatchRow = null;
   setLobbyControls(false);
   setMatchInfo("");
   updateMatchUrl();
@@ -500,9 +506,15 @@ async function onMatchRowUpdated(row) {
     gameOver = false;
     updateRestartButtonVisibility();
     pendingOwnMove = null;
+    deferredMatchRow = null;
   }
 
   if (isPendingOwnMoveEcho(row)) {
+    return;
+  }
+
+  if (pendingOwnMove) {
+    deferredMatchRow = row;
     return;
   }
 
@@ -523,6 +535,18 @@ function isPendingOwnMoveEcho(row) {
     lastMove?.r === pendingOwnMove.r &&
     lastMove?.c === pendingOwnMove.c
   );
+}
+
+function opponentOf(player) {
+  return player === State.PLAYER1 ? State.PLAYER2 : State.PLAYER1;
+}
+
+async function flushDeferredMatchRow() {
+  if (!deferredMatchRow) return;
+  const row = deferredMatchRow;
+  deferredMatchRow = null;
+  const isRemoteMove = row.move_index > lastAppliedMoveIndex;
+  await applyServerMatchRow(row, { animate: isRemoteMove && !animating });
 }
 
 function matchRowFromResponse(data) {
@@ -1043,12 +1067,17 @@ async function tryMove(r, c) {
 
     try {
       await animateMove(r, c, localPlayer);
+      if (!gameOver) {
+        setTurnStatus(opponentOf(localPlayer));
+      }
       const data = await movePromise;
-      pendingOwnMove = null;
       await applyServerMatchRow(matchRowFromResponse(data), { animate: false });
+      pendingOwnMove = null;
+      await flushDeferredMatchRow();
       if (gameOver) updateRestartButtonVisibility();
     } catch (err) {
       pendingOwnMove = null;
+      deferredMatchRow = null;
       animating = false;
 
       const message = err.message || "Move rejected by server.";
