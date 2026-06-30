@@ -1,0 +1,18 @@
+# Publishable keys (sb_publishable_...) are not JWTs; disable platform JWT
+# verification so the client can call match handlers via supabase.functions.invoke.
+# Authorization is enforced inside each function via clientId + service role writes.
+
+[functions.create-critical-mass-match]
+verify_jwt = false
+
+[functions.join-critical-mass-match]
+verify_jwt = false
+
+[functions.play-critical-mass-move]
+verify_jwt = false
+
+[functions.leave-critical-mass-match]
+verify_jwt = false
+
+[functions.restart-critical-mass-match]
+verify_jwt = false

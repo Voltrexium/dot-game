@@ -9,6 +9,19 @@ export function getClientId() {
   return id;
 }
 
+async function invokeErrorMessage(error, functionName) {
+  if (error?.context && typeof error.context.json === "function") {
+    try {
+      const body = await error.context.json();
+      if (body?.error) return body.error;
+    } catch {
+      // Response body was not JSON.
+    }
+  }
+
+  return error?.message || `Failed to call ${functionName}`;
+}
+
 export function createMultiplayerClient(supabase) {
   async function invoke(functionName, body) {
     const { data, error } = await supabase.functions.invoke(functionName, {
@@ -16,7 +29,7 @@ export function createMultiplayerClient(supabase) {
     });
 
     if (error) {
-      throw new Error(error.message || `Failed to call ${functionName}`);
+      throw new Error(await invokeErrorMessage(error, functionName));
     }
 
     if (data?.error) {
