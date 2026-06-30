@@ -40,8 +40,8 @@ Deno.serve(async (req) => {
 
   const player = playerForClientId(match, clientId);
   if (!player) return errorResponse("You are not in this match", 403);
-  if (match.status === "abandoned") {
-    return errorResponse("This match has ended", 410);
+  if (match.game_over) {
+    return errorResponse("Match has ended — create a new match to play again", 410);
   }
 
   const board = createInitialBoard();

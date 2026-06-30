@@ -48,9 +48,6 @@ Deno.serve(async (req) => {
 
   if (error) return errorResponse(error.message, 500);
   if (!match) return errorResponse("Match not found", 404);
-  if (match.status === "abandoned") {
-    return errorResponse("This match has ended", 410);
-  }
   if (match.game_over) return errorResponse("Game is already over", 409);
 
   const player = playerForClientId(match, clientId);
@@ -89,6 +86,15 @@ Deno.serve(async (req) => {
       return errorResponse("Move already applied", 409);
     }
     return errorResponse(updateError.message, 500);
+  }
+
+  if (result.gameOver) {
+    const { error: deleteError } = await supabase
+      .from("critical_mass_matches")
+      .delete()
+      .eq("id", matchId);
+
+    if (deleteError) return errorResponse(deleteError.message, 500);
   }
 
   return jsonResponse({

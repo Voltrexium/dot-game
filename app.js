@@ -245,7 +245,7 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     gameOver = row.game_over;
     if (gameOver) {
       showWinFromServer(row.winner);
-      restartBtn.hidden = matchPaused;
+      restartBtn.hidden = matchPaused || onlineMode;
     }
     drawBoard();
     return;
@@ -265,7 +265,7 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     gameOver = row.game_over;
     if (gameOver) {
       showWinFromServer(row.winner);
-      restartBtn.hidden = matchPaused;
+      restartBtn.hidden = matchPaused || onlineMode;
     } else {
       updateTurnStatus();
     }
@@ -280,7 +280,7 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
   gameOver = row.game_over;
   if (gameOver) {
     showWinFromServer(row.winner);
-    restartBtn.hidden = matchPaused;
+    restartBtn.hidden = matchPaused || onlineMode;
   } else {
     updateTurnStatus();
   }
@@ -303,7 +303,7 @@ function showWinFromServer(winner) {
       : "GAME OVER! Player 2 wins!";
     setStatus(text, "win-p2");
   }
-  restartBtn.hidden = matchPaused;
+  restartBtn.hidden = matchPaused || onlineMode;
 }
 
 async function teardownOnlineMatch() {
@@ -388,7 +388,7 @@ async function connectToMatch(row, role) {
   matchId = row.matchId ?? row.id;
   localPlayer = role;
   onlineMode = true;
-  matchPaused = row.status === "abandoned";
+  matchPaused = false;
   multiplayerConnected = false;
 
   setLobbyControls(true);
@@ -405,18 +405,18 @@ async function connectToMatch(row, role) {
   lastAppliedMoveIndex = row.move_index ?? 0;
   moveIndex = lastAppliedMoveIndex;
 
-  if (matchPaused) {
-    handleOpponentLeft();
-    return;
-  }
-
   updateTurnStatus();
   drawBoard();
 
   if (matchChannel) await mp.unsubscribe(matchChannel);
 
-  matchChannel = mp.subscribeToMatch(matchId, (updatedRow) => {
-    onMatchRowUpdated(updatedRow);
+  matchChannel = mp.subscribeToMatch(matchId, {
+    onUpdate: (updatedRow) => {
+      onMatchRowUpdated(updatedRow);
+    },
+    onDelete: () => {
+      onMatchDeleted();
+    },
   });
 
   multiplayerConnected = true;
@@ -432,16 +432,6 @@ async function connectToMatch(row, role) {
 
 async function onMatchRowUpdated(row) {
   if (!onlineMode || row.id !== matchId) return;
-
-  if (row.status === "abandoned" && !matchPaused) {
-    const opponentGone =
-      (localPlayer === State.PLAYER1 && !row.p2_client_id) ||
-      (localPlayer === State.PLAYER2 && !row.p1_client_id);
-    if (opponentGone) {
-      handleOpponentLeft();
-      return;
-    }
-  }
 
   if (row.status === "active" && matchPaused) {
     matchPaused = false;
@@ -479,6 +469,11 @@ async function onMatchRowUpdated(row) {
 
   const isRemoteMove = row.move_index > lastAppliedMoveIndex;
   await applyServerMatchRow(row, { animate: isRemoteMove && !animating });
+}
+
+function onMatchDeleted() {
+  if (!onlineMode || matchPaused || gameOver) return;
+  handleOpponentLeft();
 }
 
 function isPendingOwnMoveEcho(row) {

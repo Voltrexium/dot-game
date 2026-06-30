@@ -77,7 +77,7 @@ export function createMultiplayerClient(supabase) {
       return data;
     },
 
-    subscribeToMatch(matchId, onUpdate) {
+    subscribeToMatch(matchId, { onUpdate, onDelete }) {
       const channel = supabase
         .channel(`match_state_${matchId}`)
         .on(
@@ -90,6 +90,18 @@ export function createMultiplayerClient(supabase) {
           },
           (payload) => {
             onUpdate(payload.new);
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "DELETE",
+            schema: "public",
+            table: "critical_mass_matches",
+            filter: `id=eq.${matchId}`,
+          },
+          () => {
+            onDelete();
           }
         )
         .subscribe();

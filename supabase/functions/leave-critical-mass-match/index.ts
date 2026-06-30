@@ -1,6 +1,6 @@
 import { normalizeMatchId, playerForClientId } from "../_shared/game.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
-import { createServiceClient, matchPayload } from "../_shared/supabase.ts";
+import { createServiceClient } from "../_shared/supabase.ts";
 
 Deno.serve(async (req) => {
   const options = handleOptions(req);
@@ -36,22 +36,12 @@ Deno.serve(async (req) => {
   const role = playerForClientId(match, clientId);
   if (!role) return jsonResponse({ ok: true });
 
-  const updates: Record<string, unknown> = {
-    status: "abandoned",
-    updated_at: new Date().toISOString(),
-  };
-
-  if (match.p1_client_id === clientId) updates.p1_client_id = null;
-  if (match.p2_client_id === clientId) updates.p2_client_id = null;
-
-  const { data: updated, error: updateError } = await supabase
+  const { error: deleteError } = await supabase
     .from("critical_mass_matches")
-    .update(updates)
-    .eq("id", matchId)
-    .select()
-    .single();
+    .delete()
+    .eq("id", matchId);
 
-  if (updateError) return errorResponse(updateError.message, 500);
+  if (deleteError) return errorResponse(deleteError.message, 500);
 
-  return jsonResponse({ ok: true, match: matchPayload(updated) });
+  return jsonResponse({ ok: true, deleted: true });
 });

@@ -47,10 +47,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (match.status === "abandoned") {
-    return errorResponse("This match has ended", 410);
-  }
-
   if (match.p2_client_id && match.p2_client_id !== clientId) {
     return errorResponse("Match is full", 409);
   }
