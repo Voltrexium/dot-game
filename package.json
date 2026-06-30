@@ -2,8 +2,6 @@
   "name": "dot-game",
   "private": true,
   "scripts": {
-  "config": "node scripts/generate-config.mjs",
-  "dev": "npm run config && next dev",
-  "build": "npm run config && next build"
-}
+    "start": "npx --yes serve ."
+  }
 }
