@@ -170,7 +170,22 @@ function setLobbyControls(inMatch) {
 }
 
 function updateRestartButtonVisibility() {
-  restartBtn.hidden = !gameOver || matchPaused;
+  const show = gameOver && !matchPaused;
+  restartBtn.hidden = !show;
+  restartBtn.textContent = onlineMode ? "Play again" : "New game";
+}
+
+function normalizeServerRow(row) {
+  return {
+    id: row.id ?? row.matchId,
+    board: row.board,
+    turn: row.turn,
+    move_index: row.move_index ?? row.moveIndex ?? 0,
+    game_over: Boolean(row.game_over ?? row.gameOver),
+    winner: row.winner ?? null,
+    last_move: row.last_move ?? row.lastMove ?? null,
+    status: row.status,
+  };
 }
 
 function initializeBoard() {
@@ -237,11 +252,13 @@ function applyServerMatchRow(row, { animate = false } = {}) {
 }
 
 async function _applyServerMatchRow(row, { animate = false } = {}) {
+  row = normalizeServerRow(row);
+
   if (row.status) {
-    matchActive = row.status === "active";
+    matchActive = row.status === "active" || row.status === "finished";
   }
 
-  const nextMoveIndex = row.move_index ?? 0;
+  const nextMoveIndex = row.move_index;
   const lastMove = row.last_move;
   const mover =
     nextMoveIndex > 0
@@ -252,16 +269,26 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
 
   let showEndScreen = false;
 
+  if (nextMoveIndex < lastAppliedMoveIndex) {
+    return;
+  }
+
   if (nextMoveIndex <= lastAppliedMoveIndex) {
     hydrateBoardFromServer(row.board);
     turn = row.turn;
     moveIndex = nextMoveIndex;
-    gameOver = row.game_over;
-    if (gameOver) {
+
+    if (nextMoveIndex === 0 && lastAppliedMoveIndex > 0) {
+      gameOver = false;
+      endConfirmSent = false;
+      lastAppliedMoveIndex = 0;
+    } else if (row.game_over) {
+      gameOver = true;
       showWinFromServer(row.winner);
-      updateRestartButtonVisibility();
       showEndScreen = true;
     }
+
+    updateRestartButtonVisibility();
     drawBoard();
     if (showEndScreen) scheduleConfirmMatchEnd();
     return;
@@ -278,14 +305,15 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     turn = row.turn;
     moveIndex = nextMoveIndex;
     lastAppliedMoveIndex = nextMoveIndex;
-    gameOver = row.game_over;
-    if (gameOver) {
+    if (row.game_over) {
+      gameOver = true;
       showWinFromServer(row.winner);
-      updateRestartButtonVisibility();
       showEndScreen = true;
     } else {
+      gameOver = false;
       updateTurnStatus();
     }
+    updateRestartButtonVisibility();
     drawBoard();
     if (showEndScreen) scheduleConfirmMatchEnd();
     return;
@@ -295,14 +323,15 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
   turn = row.turn;
   moveIndex = nextMoveIndex;
   lastAppliedMoveIndex = nextMoveIndex;
-  gameOver = row.game_over;
-  if (gameOver) {
+  if (row.game_over) {
+    gameOver = true;
     showWinFromServer(row.winner);
-    updateRestartButtonVisibility();
     showEndScreen = true;
   } else {
+    gameOver = false;
     updateTurnStatus();
   }
+  updateRestartButtonVisibility();
   drawBoard();
   if (showEndScreen) scheduleConfirmMatchEnd();
 }
@@ -1045,6 +1074,7 @@ async function tryMove(r, c) {
       const data = await movePromise;
       pendingOwnMove = null;
       await applyServerMatchRow(matchRowFromResponse(data), { animate: false });
+      if (gameOver) updateRestartButtonVisibility();
     } catch (err) {
       pendingOwnMove = null;
       animating = false;
@@ -1096,7 +1126,7 @@ restartBtn.addEventListener("click", async () => {
       gameOver = false;
       endConfirmSent = false;
       await applyServerMatchRow(
-        {
+        normalizeServerRow({
           id: matchId,
           board: data.board,
           turn: data.turn,
@@ -1105,10 +1135,11 @@ restartBtn.addEventListener("click", async () => {
           winner: data.winner,
           last_move: null,
           status: data.status,
-        },
+        }),
         { animate: false }
       );
       updateTurnStatus();
+      updateRestartButtonVisibility();
     } catch (err) {
       showErrorStatus(err.message || "Could not restart match.");
     } finally {
