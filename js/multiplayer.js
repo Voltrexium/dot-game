@@ -70,15 +70,23 @@ export function createMultiplayerClient(supabase) {
       return invoke("confirm-critical-mass-end", { matchId, clientId });
     },
 
-    async fetchMatchRow(matchId) {
-      const { data, error } = await supabase
-        .from("critical_mass_matches")
-        .select()
-        .eq("id", matchId)
-        .single();
+    async fetchMatchRow(matchId, clientId) {
+      const data = await invoke("fetch-critical-mass-match", {
+        matchId,
+        clientId,
+      });
 
-      if (error) throw new Error(error.message || "Could not load match state");
-      return data;
+      return {
+        id: data.matchId ?? matchId,
+        board: data.board,
+        turn: data.turn,
+        move_index: data.moveIndex,
+        game_over: data.gameOver,
+        winner: data.winner,
+        last_move: data.lastMove,
+        status: data.status,
+        p2_joined: data.p2Connected,
+      };
     },
 
     subscribeToMatch(matchId, { onUpdate, onDelete }) {

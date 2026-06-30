@@ -1,4 +1,5 @@
-import { normalizeMatchId, playerForClientId } from "../_shared/game.ts";
+import { normalizeMatchId } from "../_shared/game.ts";
+import { loadMatch, roleForClient } from "../_shared/match-auth.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/supabase.ts";
 
@@ -24,29 +25,29 @@ Deno.serve(async (req) => {
   if (!clientId) return errorResponse("clientId is required");
 
   const supabase = createServiceClient();
-  const { data: match, error } = await supabase
-    .from("critical_mass_matches")
-    .select()
-    .eq("id", matchId)
-    .maybeSingle();
+  const loaded = await loadMatch(supabase, matchId);
 
-  if (error) return errorResponse(error.message, 500);
-  if (!match) return jsonResponse({ ok: true, deleted: true });
+  if (loaded.error === "Match not found") {
+    return jsonResponse({ ok: true, deleted: true });
+  }
+  if (loaded.error) return errorResponse(loaded.error, 500);
 
-  const role = playerForClientId(match, clientId);
+  const { match, auth } = loaded;
+
+  const role = roleForClient(auth, clientId);
   if (!role) return errorResponse("You are not in this match", 403);
   if (!match.game_over) {
     return errorResponse("Match is not finished yet", 409);
   }
 
-  const nextP1Ack = match.p1_client_id === clientId
+  const nextP1Ack = auth.p1_client_id === clientId
     ? true
     : Boolean(match.p1_end_ack);
-  const nextP2Ack = match.p2_client_id === clientId
+  const nextP2Ack = auth.p2_client_id === clientId
     ? true
     : Boolean(match.p2_end_ack);
 
-  const bothAcked = nextP1Ack && (!match.p2_client_id || nextP2Ack);
+  const bothAcked = nextP1Ack && (!auth.p2_client_id || nextP2Ack);
 
   if (bothAcked) {
     const { error: deleteError } = await supabase

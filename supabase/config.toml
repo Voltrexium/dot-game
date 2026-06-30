@@ -19,3 +19,6 @@ verify_jwt = false
 
 [functions.confirm-critical-mass-end]
 verify_jwt = false
+
+[functions.fetch-critical-mass-match]
+verify_jwt = false

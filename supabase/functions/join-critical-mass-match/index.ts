@@ -1,8 +1,5 @@
-import {
-  normalizeMatchId,
-  playerForClientId,
-  State,
-} from "../_shared/game.ts";
+import { normalizeMatchId, State } from "../_shared/game.ts";
+import { loadMatch, roleForClient } from "../_shared/match-auth.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
 import { createServiceClient, matchPayload } from "../_shared/supabase.ts";
 
@@ -28,16 +25,15 @@ Deno.serve(async (req) => {
   if (!clientId) return errorResponse("clientId is required");
 
   const supabase = createServiceClient();
-  const { data: match, error } = await supabase
-    .from("critical_mass_matches")
-    .select()
-    .eq("id", matchId)
-    .maybeSingle();
+  const loaded = await loadMatch(supabase, matchId);
 
-  if (error) return errorResponse(error.message, 500);
-  if (!match) return errorResponse("Match not found", 404);
+  if (loaded.error === "Match not found") {
+    return errorResponse("Match not found", 404);
+  }
+  if (loaded.error) return errorResponse(loaded.error, 500);
 
-  const existingRole = playerForClientId(match, clientId);
+  const { match, auth } = loaded;
+  const existingRole = roleForClient(auth, clientId);
   if (existingRole) {
     return jsonResponse({
       ...matchPayload(match),
@@ -47,58 +43,55 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (match.p2_client_id && match.p2_client_id !== clientId) {
+  if (auth.p2_client_id && auth.p2_client_id !== clientId) {
     return errorResponse("Match is full", 409);
   }
 
-  if (match.p1_client_id === clientId) {
-    return jsonResponse({
-      ...matchPayload(match),
-      role: State.PLAYER1,
-      clientId,
-      reconnected: true,
-    });
-  }
-
-  const updates: Record<string, unknown> = {
-    p2_client_id: clientId,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (match.status === "waiting") {
-    updates.status = "active";
-  }
-
-  const { data: updated, error: updateError } = await supabase
-    .from("critical_mass_matches")
-    .update(updates)
-    .eq("id", matchId)
+  const { data: updatedAuth, error: authUpdateError } = await supabase
+    .from("critical_mass_match_auth")
+    .update({ p2_client_id: clientId })
+    .eq("match_id", matchId)
     .is("p2_client_id", null)
     .select()
     .maybeSingle();
 
-  if (updateError) return errorResponse(updateError.message, 500);
+  if (authUpdateError) return errorResponse(authUpdateError.message, 500);
 
-  if (!updated) {
-    const { data: refreshed } = await supabase
-      .from("critical_mass_matches")
-      .select()
-      .eq("id", matchId)
-      .single();
+  if (!updatedAuth) {
+    const refreshed = await loadMatch(supabase, matchId);
+    if (refreshed.error) return errorResponse(refreshed.error, 500);
 
-    const role = playerForClientId(refreshed!, clientId);
+    const role = roleForClient(refreshed.auth, clientId);
     if (!role) return errorResponse("Match is full", 409);
 
     return jsonResponse({
-      ...matchPayload(refreshed!),
+      ...matchPayload(refreshed.match),
       role,
       clientId,
       reconnected: role === State.PLAYER2,
     });
   }
 
+  const matchUpdates: Record<string, unknown> = {
+    p2_joined: true,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (match.status === "waiting") {
+    matchUpdates.status = "active";
+  }
+
+  const { data: updatedMatch, error: matchUpdateError } = await supabase
+    .from("critical_mass_matches")
+    .update(matchUpdates)
+    .eq("id", matchId)
+    .select()
+    .single();
+
+  if (matchUpdateError) return errorResponse(matchUpdateError.message, 500);
+
   return jsonResponse({
-    ...matchPayload(updated),
+    ...matchPayload(updatedMatch),
     role: State.PLAYER2,
     clientId,
     reconnected: false,

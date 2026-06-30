@@ -34,24 +34,36 @@ Deno.serve(async (req) => {
       .from("critical_mass_matches")
       .insert({
         id,
-        p1_client_id: clientId,
         board,
         status: "waiting",
       })
       .select()
       .single();
 
-    if (!error && data) {
-      return jsonResponse({
-        ...matchPayload(data),
-        role: "PLAYER1",
-        clientId,
-      });
+    if (error) {
+      if (error.code !== "23505") {
+        return errorResponse(error.message ?? "Failed to create match", 500);
+      }
+      continue;
     }
 
-    if (error?.code !== "23505") {
-      return errorResponse(error?.message ?? "Failed to create match", 500);
+    const { error: authError } = await supabase
+      .from("critical_mass_match_auth")
+      .insert({
+        match_id: id,
+        p1_client_id: clientId,
+      });
+
+    if (authError) {
+      await supabase.from("critical_mass_matches").delete().eq("id", id);
+      return errorResponse(authError.message, 500);
     }
+
+    return jsonResponse({
+      ...matchPayload(data),
+      role: "PLAYER1",
+      clientId,
+    });
   }
 
   return errorResponse("Could not allocate a unique match code", 500);

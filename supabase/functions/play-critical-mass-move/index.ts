@@ -1,10 +1,5 @@
-import {
-  applyMove,
-  normalizeMatchId,
-  playerForClientId,
-  State,
-  type Tile,
-} from "../_shared/game.ts";
+import { applyMove, normalizeMatchId, State, type Tile } from "../_shared/game.ts";
+import { loadMatch, roleForClient } from "../_shared/match-auth.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
 import { createServiceClient, matchPayload } from "../_shared/supabase.ts";
 
@@ -21,6 +16,7 @@ Deno.serve(async (req) => {
     clientId?: string;
     r?: number;
     c?: number;
+    expectedMoveIndex?: number;
   };
 
   try {
@@ -33,24 +29,42 @@ Deno.serve(async (req) => {
   const clientId = body.clientId?.trim();
   const r = body.r;
   const c = body.c;
+  const expectedMoveIndex = body.expectedMoveIndex;
+
   if (!matchId) return errorResponse("matchId is required");
   if (!clientId) return errorResponse("clientId is required");
   if (!Number.isInteger(r) || !Number.isInteger(c)) {
     return errorResponse("r and c must be integers");
   }
+  if (
+    expectedMoveIndex !== undefined &&
+    (!Number.isInteger(expectedMoveIndex) || expectedMoveIndex < 0)
+  ) {
+    return errorResponse("expectedMoveIndex must be a non-negative integer");
+  }
 
   const supabase = createServiceClient();
-  const { data: match, error } = await supabase
-    .from("critical_mass_matches")
-    .select()
-    .eq("id", matchId)
-    .maybeSingle();
+  const loaded = await loadMatch(supabase, matchId);
 
-  if (error) return errorResponse(error.message, 500);
-  if (!match) return errorResponse("Match not found", 404);
+  if (loaded.error === "Match not found") {
+    return errorResponse("Match not found", 404);
+  }
+  if (loaded.error) return errorResponse(loaded.error, 500);
+
+  const { match, auth } = loaded;
+
   if (match.game_over) return errorResponse("Game is already over", 409);
+  if (match.status !== "active") {
+    return errorResponse("Waiting for opponent to join", 409);
+  }
+  if (
+    expectedMoveIndex !== undefined &&
+    expectedMoveIndex !== match.move_index
+  ) {
+    return errorResponse("Stale move index", 409);
+  }
 
-  const player = playerForClientId(match, clientId);
+  const player = roleForClient(auth, clientId);
   if (!player) return errorResponse("You are not in this match", 403);
   if (match.turn !== player) return errorResponse("Not your turn", 409);
 

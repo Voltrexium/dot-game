@@ -13,18 +13,7 @@ export function createServiceClient() {
   });
 }
 
-export type MatchRow = {
-  id: string;
-  p1_client_id: string | null;
-  p2_client_id: string | null;
-  turn: string;
-  game_over: boolean;
-  winner: string | null;
-  move_index: number;
-  board: unknown;
-  last_move: { r: number; c: number } | null;
-  status: string;
-};
+import type { MatchRow } from "./match-auth.ts";
 
 export function matchPayload(match: MatchRow) {
   return {
@@ -36,7 +25,7 @@ export function matchPayload(match: MatchRow) {
     winner: match.winner,
     status: match.status,
     lastMove: match.last_move,
-    p1Connected: Boolean(match.p1_client_id),
-    p2Connected: Boolean(match.p2_client_id),
+    p1Connected: true,
+    p2Connected: Boolean(match.p2_joined),
   };
 }

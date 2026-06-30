@@ -1,4 +1,5 @@
-import { normalizeMatchId, playerForClientId } from "../_shared/game.ts";
+import { normalizeMatchId } from "../_shared/game.ts";
+import { loadMatch, roleForClient } from "../_shared/match-auth.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/supabase.ts";
 
@@ -24,16 +25,14 @@ Deno.serve(async (req) => {
   if (!clientId) return errorResponse("clientId is required");
 
   const supabase = createServiceClient();
-  const { data: match, error } = await supabase
-    .from("critical_mass_matches")
-    .select()
-    .eq("id", matchId)
-    .maybeSingle();
+  const loaded = await loadMatch(supabase, matchId);
 
-  if (error) return errorResponse(error.message, 500);
-  if (!match) return jsonResponse({ ok: true });
+  if (loaded.error === "Match not found") {
+    return jsonResponse({ ok: true });
+  }
+  if (loaded.error) return errorResponse(loaded.error, 500);
 
-  const role = playerForClientId(match, clientId);
+  const role = roleForClient(loaded.auth, clientId);
   if (!role) return jsonResponse({ ok: true });
 
   const { error: deleteError } = await supabase

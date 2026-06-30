@@ -1,8 +1,4 @@
-import {
-  createInitialBoard,
-  normalizeMatchId,
-  State,
-} from "../_shared/game.ts";
+import { normalizeMatchId } from "../_shared/game.ts";
 import { loadMatch, roleForClient } from "../_shared/match-auth.ts";
 import { handleOptions, errorResponse, jsonResponse } from "../_shared/cors.ts";
 import { createServiceClient, matchPayload } from "../_shared/supabase.ts";
@@ -36,39 +32,8 @@ Deno.serve(async (req) => {
   }
   if (loaded.error) return errorResponse(loaded.error, 500);
 
-  const { match, auth } = loaded;
+  const role = roleForClient(loaded.auth, clientId);
+  if (!role) return errorResponse("You are not in this match", 403);
 
-  const player = roleForClient(auth, clientId);
-  if (!player) return errorResponse("You are not in this match", 403);
-  if (!match.game_over) {
-    return errorResponse("Cannot restart — the game is still in progress", 409);
-  }
-
-  const board = createInitialBoard();
-  const status = match.p2_joined ? "active" : "waiting";
-
-  const { data: updated, error: updateError } = await supabase
-    .from("critical_mass_matches")
-    .update({
-      board,
-      last_move: null,
-      turn: State.PLAYER1,
-      move_index: 0,
-      game_over: false,
-      winner: null,
-      status,
-      p1_end_ack: false,
-      p2_end_ack: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", matchId)
-    .select()
-    .single();
-
-  if (updateError) return errorResponse(updateError.message, 500);
-
-  return jsonResponse({
-    ...matchPayload(updated),
-    restartedBy: player,
-  });
+  return jsonResponse(matchPayload(loaded.match));
 });

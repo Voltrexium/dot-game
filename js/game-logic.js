@@ -145,8 +145,8 @@ export function applyMove(board, r, c, currentTurn) {
   };
 }
 
-export function playerForClientId(match, clientId) {
-  if (match.p1_client_id === clientId) return State.PLAYER1;
-  if (match.p2_client_id === clientId) return State.PLAYER2;
+export function playerForClientId(auth, clientId) {
+  if (auth.p1_client_id === clientId) return State.PLAYER1;
+  if (auth.p2_client_id === clientId) return State.PLAYER2;
   return null;
 }

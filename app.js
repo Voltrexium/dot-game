@@ -75,6 +75,7 @@ let matchId = null;
 let matchChannel = null;
 let multiplayerConnected = false;
 let matchPaused = false;
+let matchActive = false;
 let moveIndex = 0;
 let lastAppliedMoveIndex = 0;
 let errorRevertTimer = null;
@@ -168,6 +169,10 @@ function setLobbyControls(inMatch) {
   copyInviteBtn.hidden = !inMatch || localPlayer !== State.PLAYER1;
 }
 
+function updateRestartButtonVisibility() {
+  restartBtn.hidden = !gameOver || matchPaused;
+}
+
 function initializeBoard() {
   board = createInitialBoard();
   turn = State.PLAYER1;
@@ -177,6 +182,7 @@ function initializeBoard() {
   lastAppliedMoveIndex = 0;
   pendingOwnMove = null;
   endConfirmSent = false;
+  matchActive = false;
 }
 
 function hydrateBoardFromServer(serverBoard) {
@@ -204,7 +210,7 @@ function checkWinCondition() {
       : "GAME OVER! Player 2 wins!";
     setStatus(text, "win-p2");
     gameOver = true;
-    restartBtn.hidden = onlineMode && matchPaused;
+    updateRestartButtonVisibility();
     return true;
   }
 
@@ -216,7 +222,7 @@ function checkWinCondition() {
       : "GAME OVER! Player 1 wins!";
     setStatus(text, "win-p1");
     gameOver = true;
-    restartBtn.hidden = onlineMode && matchPaused;
+    updateRestartButtonVisibility();
     return true;
   }
 
@@ -231,6 +237,10 @@ function applyServerMatchRow(row, { animate = false } = {}) {
 }
 
 async function _applyServerMatchRow(row, { animate = false } = {}) {
+  if (row.status) {
+    matchActive = row.status === "active";
+  }
+
   const nextMoveIndex = row.move_index ?? 0;
   const lastMove = row.last_move;
   const mover =
@@ -249,7 +259,7 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     gameOver = row.game_over;
     if (gameOver) {
       showWinFromServer(row.winner);
-      restartBtn.hidden = matchPaused || onlineMode;
+      updateRestartButtonVisibility();
       showEndScreen = true;
     }
     drawBoard();
@@ -271,7 +281,7 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     gameOver = row.game_over;
     if (gameOver) {
       showWinFromServer(row.winner);
-      restartBtn.hidden = matchPaused || onlineMode;
+      updateRestartButtonVisibility();
       showEndScreen = true;
     } else {
       updateTurnStatus();
@@ -288,7 +298,7 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
   gameOver = row.game_over;
   if (gameOver) {
     showWinFromServer(row.winner);
-    restartBtn.hidden = matchPaused || onlineMode;
+    updateRestartButtonVisibility();
     showEndScreen = true;
   } else {
     updateTurnStatus();
@@ -326,7 +336,7 @@ function showWinFromServer(winner) {
       : "GAME OVER! Player 2 wins!";
     setStatus(text, "win-p2");
   }
-  restartBtn.hidden = matchPaused || onlineMode;
+  updateRestartButtonVisibility();
 }
 
 async function teardownOnlineMatch() {
@@ -352,6 +362,8 @@ async function leaveOnlineMatch() {
   matchId = null;
   multiplayerConnected = false;
   matchPaused = false;
+  multiplayerConnected = false;
+  matchActive = false;
   pendingOwnMove = null;
   endConfirmSent = false;
   setLobbyControls(false);
@@ -363,7 +375,7 @@ async function leaveOnlineMatch() {
   animating = false;
   overlay = null;
   initializeBoard();
-  restartBtn.hidden = true;
+  updateRestartButtonVisibility();
   playLocalBtn.hidden = true;
   updateTurnStatus();
   drawBoard();
@@ -381,7 +393,7 @@ async function confirmLeaveMatch() {
 function handleOpponentLeft() {
   matchPaused = true;
   multiplayerConnected = false;
-  restartBtn.hidden = true;
+  updateRestartButtonVisibility();
   playLocalBtn.hidden = false;
   setMatchInfoWithCode(matchId, "", { disconnected: true });
   setPausedStatus("Opponent left the match");
@@ -402,7 +414,7 @@ async function startLocalFromPaused() {
   animating = false;
   overlay = null;
   initializeBoard();
-  restartBtn.hidden = true;
+  updateRestartButtonVisibility();
   updateTurnStatus();
   drawBoard();
   await teardownOnlineMatch();
@@ -413,6 +425,7 @@ async function connectToMatch(row, role) {
   localPlayer = role;
   onlineMode = true;
   matchPaused = false;
+  matchActive = row.status === "active";
   multiplayerConnected = false;
   endConfirmSent = false;
 
@@ -423,7 +436,7 @@ async function connectToMatch(row, role) {
   animGeneration++;
   animating = false;
   overlay = null;
-  restartBtn.hidden = true;
+  updateRestartButtonVisibility();
   playLocalBtn.hidden = true;
 
   await applyServerMatchRow(row, { animate: false });
@@ -468,7 +481,6 @@ async function onMatchRowUpdated(row) {
 
   if (
     row.status === "active" &&
-    row.p2_client_id &&
     localPlayer === State.PLAYER1 &&
     !matchPaused &&
     matchInfoEl.textContent.includes("waiting")
@@ -484,7 +496,8 @@ async function onMatchRowUpdated(row) {
     animating = false;
     overlay = null;
     gameOver = false;
-    restartBtn.hidden = true;
+    endConfirmSent = false;
+    updateRestartButtonVisibility();
     pendingOwnMove = null;
   }
 
@@ -530,7 +543,7 @@ function isMoveConflictError(message) {
 
 async function syncMatchFromServer({ animate = false } = {}) {
   if (!mp || !matchId) return false;
-  const row = await mp.fetchMatchRow(matchId);
+  const row = await mp.fetchMatchRow(matchId, clientId);
   await applyServerMatchRow(row, { animate });
   return true;
 }
@@ -1011,6 +1024,10 @@ async function tryMove(r, c) {
   if (gameOver || animating) return;
   if (onlineMode && matchPaused) return;
   if (onlineMode && !multiplayerConnected) return;
+  if (onlineMode && !matchActive) {
+    showErrorStatus("Waiting for your opponent to join…");
+    return;
+  }
   if (onlineMode && turn !== localPlayer) return;
 
   if (board[r][c].state !== turn) {
@@ -1077,7 +1094,7 @@ restartBtn.addEventListener("click", async () => {
       animating = false;
       overlay = null;
       gameOver = false;
-      restartBtn.hidden = true;
+      endConfirmSent = false;
       await applyServerMatchRow(
         {
           id: matchId,
@@ -1104,7 +1121,7 @@ restartBtn.addEventListener("click", async () => {
   animating = false;
   overlay = null;
   initializeBoard();
-  restartBtn.hidden = true;
+  updateRestartButtonVisibility();
   updateTurnStatus();
   drawBoard();
 });
