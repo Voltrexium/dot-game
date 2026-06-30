@@ -66,6 +66,10 @@ export function createMultiplayerClient(supabase) {
       return invoke("restart-critical-mass-match", { matchId, clientId });
     },
 
+    confirmMatchEnd(matchId, clientId) {
+      return invoke("confirm-critical-mass-end", { matchId, clientId });
+    },
+
     async fetchMatchRow(matchId) {
       const { data, error } = await supabase
         .from("critical_mass_matches")

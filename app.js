@@ -104,6 +104,7 @@ let animGeneration = 0;
 let overlay = null;
 /** While set, realtime echoes of this move are deferred until the HTTP response. */
 let pendingOwnMove = null;
+let endConfirmSent = false;
 
 function normalizeMatchId(code) {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -175,6 +176,7 @@ function initializeBoard() {
   moveIndex = 0;
   lastAppliedMoveIndex = 0;
   pendingOwnMove = null;
+  endConfirmSent = false;
 }
 
 function hydrateBoardFromServer(serverBoard) {
@@ -238,6 +240,8 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
         : State.PLAYER1
       : null;
 
+  let showEndScreen = false;
+
   if (nextMoveIndex <= lastAppliedMoveIndex) {
     hydrateBoardFromServer(row.board);
     turn = row.turn;
@@ -246,8 +250,10 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     if (gameOver) {
       showWinFromServer(row.winner);
       restartBtn.hidden = matchPaused || onlineMode;
+      showEndScreen = true;
     }
     drawBoard();
+    if (showEndScreen) scheduleConfirmMatchEnd();
     return;
   }
 
@@ -266,10 +272,12 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
     if (gameOver) {
       showWinFromServer(row.winner);
       restartBtn.hidden = matchPaused || onlineMode;
+      showEndScreen = true;
     } else {
       updateTurnStatus();
     }
     drawBoard();
+    if (showEndScreen) scheduleConfirmMatchEnd();
     return;
   }
 
@@ -281,10 +289,25 @@ async function _applyServerMatchRow(row, { animate = false } = {}) {
   if (gameOver) {
     showWinFromServer(row.winner);
     restartBtn.hidden = matchPaused || onlineMode;
+    showEndScreen = true;
   } else {
     updateTurnStatus();
   }
   drawBoard();
+  if (showEndScreen) scheduleConfirmMatchEnd();
+}
+
+function scheduleConfirmMatchEnd() {
+  if (!onlineMode || !mp || !matchId || !gameOver || endConfirmSent) return;
+
+  endConfirmSent = true;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      mp.confirmMatchEnd(matchId, clientId).catch(() => {
+        endConfirmSent = false;
+      });
+    });
+  });
 }
 
 function showWinFromServer(winner) {
@@ -330,6 +353,7 @@ async function leaveOnlineMatch() {
   multiplayerConnected = false;
   matchPaused = false;
   pendingOwnMove = null;
+  endConfirmSent = false;
   setLobbyControls(false);
   setMatchInfo("");
   updateMatchUrl();
@@ -390,6 +414,7 @@ async function connectToMatch(row, role) {
   onlineMode = true;
   matchPaused = false;
   multiplayerConnected = false;
+  endConfirmSent = false;
 
   setLobbyControls(true);
   updateLegendLabels();

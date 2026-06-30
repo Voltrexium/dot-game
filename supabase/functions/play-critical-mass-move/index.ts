@@ -64,18 +64,25 @@ Deno.serve(async (req) => {
   const nextMoveIndex = match.move_index + 1;
   const status = result.gameOver ? "finished" : match.status;
 
+  const updatePayload: Record<string, unknown> = {
+    board: result.board,
+    last_move: result.lastMove,
+    turn: result.turn,
+    move_index: nextMoveIndex,
+    game_over: result.gameOver,
+    winner: result.winner,
+    status,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (result.gameOver) {
+    updatePayload.p1_end_ack = false;
+    updatePayload.p2_end_ack = false;
+  }
+
   const { data: updated, error: updateError } = await supabase
     .from("critical_mass_matches")
-    .update({
-      board: result.board,
-      last_move: result.lastMove,
-      turn: result.turn,
-      move_index: nextMoveIndex,
-      game_over: result.gameOver,
-      winner: result.winner,
-      status,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq("id", matchId)
     .eq("move_index", match.move_index)
     .select()
@@ -86,15 +93,6 @@ Deno.serve(async (req) => {
       return errorResponse("Move already applied", 409);
     }
     return errorResponse(updateError.message, 500);
-  }
-
-  if (result.gameOver) {
-    const { error: deleteError } = await supabase
-      .from("critical_mass_matches")
-      .delete()
-      .eq("id", matchId);
-
-    if (deleteError) return errorResponse(deleteError.message, 500);
   }
 
   return jsonResponse({

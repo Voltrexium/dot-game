@@ -58,6 +58,8 @@ Deno.serve(async (req) => {
       game_over: false,
       winner: null,
       status,
+      p1_end_ack: false,
+      p2_end_ack: false,
       updated_at: new Date().toISOString(),
     })
     .eq("id", matchId)
