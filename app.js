@@ -32,6 +32,9 @@ const joinMatchBtn = document.getElementById("join-match");
 const matchCodeInput = document.getElementById("match-code");
 const matchInfoEl = document.getElementById("match-info");
 const leaveMatchBtn = document.getElementById("leave-match");
+const leaveConfirmDialog = document.getElementById("leave-confirm");
+const leaveCancelBtn = document.getElementById("leave-cancel");
+const leaveConfirmBtn = document.getElementById("leave-confirm-btn");
 const legendP1El = document.getElementById("legend-p1");
 const legendP2El = document.getElementById("legend-p2");
 const INPUT_VERB = window.matchMedia("(pointer: coarse)").matches ? "tap" : "click";
@@ -44,6 +47,7 @@ let localPlayer = null;
 let matchId = null;
 let gameChannel = null;
 let multiplayerConnected = false;
+let matchPaused = false;
 
 let boardPixelSize = BASE_BOARD_SIZE;
 let labelOffset = 36;
@@ -132,9 +136,10 @@ function updateLegendLabels() {
     : "Player 2";
 }
 
-function setMatchInfo(text, { connected = false } = {}) {
+function setMatchInfo(text, { connected = false, disconnected = false } = {}) {
   matchInfoEl.hidden = !text;
   matchInfoEl.classList.toggle("connected", connected);
+  matchInfoEl.classList.toggle("disconnected", disconnected);
   matchInfoEl.innerHTML = text;
 }
 
@@ -155,6 +160,7 @@ async function leaveOnlineMatch() {
   localPlayer = null;
   matchId = null;
   multiplayerConnected = false;
+  matchPaused = false;
   setLobbyControls(false);
   setMatchInfo("");
   updateMatchUrl();
@@ -166,6 +172,41 @@ async function leaveOnlineMatch() {
   initializeBoard();
   restartBtn.hidden = true;
   updateTurnStatus();
+  drawBoard();
+}
+
+function requestLeaveMatch() {
+  leaveConfirmDialog.showModal();
+}
+
+async function confirmLeaveMatch() {
+  leaveConfirmDialog.close();
+
+  if (onlineMode && gameChannel) {
+    await gameChannel.send({
+      type: "broadcast",
+      event: "player-left",
+      payload: { clientId },
+    });
+  }
+
+  await leaveOnlineMatch();
+}
+
+function setPausedStatus(message) {
+  statusEl.className = "paused";
+  statusEl.innerHTML = `<span class="turn-indicator__text">${message}</span>`;
+}
+
+function handleOpponentLeft() {
+  matchPaused = true;
+  multiplayerConnected = false;
+  restartBtn.hidden = true;
+  setMatchInfo(
+    `Match <strong>${matchId}</strong> — opponent disconnected`,
+    { disconnected: true }
+  );
+  setPausedStatus("Opponent left the match");
   drawBoard();
 }
 
@@ -221,6 +262,7 @@ async function subscribeToMatch(id, role) {
   matchId = normalizedId;
   localPlayer = role;
   multiplayerConnected = false;
+  matchPaused = false;
 
   setLobbyControls(true);
   updateLegendLabels();
@@ -253,6 +295,10 @@ async function subscribeToMatch(id, role) {
       restartBtn.hidden = true;
       updateTurnStatus();
       drawBoard();
+    })
+    .on("broadcast", { event: "player-left" }, ({ payload }) => {
+      if (!payload || payload.clientId === clientId) return;
+      handleOpponentLeft();
     })
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
@@ -562,7 +608,9 @@ function setTurnStatus(player, { busy = false, message } = {}) {
   const busyClass = busy ? " busy" : "";
   let text = message;
 
-  if (!text && onlineMode && !multiplayerConnected) {
+  if (!text && onlineMode && matchPaused) {
+    text = "Opponent left the match";
+  } else if (!text && onlineMode && !multiplayerConnected) {
     text = "Connecting to match…";
   } else if (!text && onlineMode && player !== localPlayer && !gameOver) {
     text = "Opponent's turn — waiting…";
@@ -578,7 +626,7 @@ function setTurnStatus(player, { busy = false, message } = {}) {
 }
 
 function updateTurnStatus({ busy = false } = {}) {
-  if (gameOver) return;
+  if (gameOver || matchPaused) return;
   setTurnStatus(turn, { busy });
 }
 
@@ -699,11 +747,12 @@ function drawBoard() {
     );
   }
 
-  canvas.style.cursor = animating ? "wait" : "pointer";
+  canvas.style.cursor = animating ? "wait" : matchPaused ? "not-allowed" : "pointer";
 }
 
 async function tryMove(r, c) {
   if (gameOver || animating) return;
+  if (onlineMode && matchPaused) return;
   if (onlineMode && !multiplayerConnected) return;
   if (onlineMode && turn !== localPlayer) return;
 
@@ -754,7 +803,9 @@ restartBtn.addEventListener("click", async () => {
 
 createMatchBtn.addEventListener("click", createMatch);
 joinMatchBtn.addEventListener("click", joinMatch);
-leaveMatchBtn.addEventListener("click", leaveOnlineMatch);
+leaveMatchBtn.addEventListener("click", requestLeaveMatch);
+leaveCancelBtn.addEventListener("click", () => leaveConfirmDialog.close());
+leaveConfirmBtn.addEventListener("click", confirmLeaveMatch);
 matchCodeInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") joinMatch();
 });
