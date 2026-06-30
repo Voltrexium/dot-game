@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
 
 const State = {
   NULL: "NULL",
@@ -36,7 +36,7 @@ const legendP1El = document.getElementById("legend-p1");
 const legendP2El = document.getElementById("legend-p2");
 const INPUT_VERB = window.matchMedia("(pointer: coarse)").matches ? "tap" : "click";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const clientId = crypto.randomUUID();
 
 let onlineMode = false;
