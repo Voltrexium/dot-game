@@ -195,17 +195,17 @@ async function confirmLeaveMatch() {
 
 function setPausedStatus(message) {
   statusEl.className = "paused";
-  statusEl.innerHTML = `<span class="turn-indicator__text">${message}</span>`;
+  statusEl.innerHTML = `
+    <span class="turn-indicator__dot" aria-hidden="true"></span>
+    <span class="turn-indicator__text">${message}</span>
+  `;
 }
 
 function handleOpponentLeft() {
   matchPaused = true;
   multiplayerConnected = false;
   restartBtn.hidden = true;
-  setMatchInfo(
-    `Match <strong>${matchId}</strong> — opponent disconnected`,
-    { disconnected: true }
-  );
+  setMatchInfo(`Match <strong>${matchId}</strong>`, { disconnected: true });
   setPausedStatus("Opponent left the match");
   drawBoard();
 }
@@ -737,14 +737,28 @@ function drawBoard() {
 
   drawOverlay();
 
-  if (gameOver) {
+  const boardLeft = labelOffset;
+  const boardTop = labelOffset;
+  const boardW = cellSize * BOARD_SIZE;
+  const boardH = cellSize * BOARD_SIZE;
+
+  if (matchPaused) {
+    const cx = boardLeft + boardW / 2;
+    const cy = boardTop + boardH / 2;
+
     ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-    ctx.fillRect(
-      labelOffset,
-      labelOffset,
-      cellSize * BOARD_SIZE,
-      cellSize * BOARD_SIZE
-    );
+    ctx.fillRect(boardLeft, boardTop, boardW, boardH);
+
+    ctx.fillStyle = "#ffc16b";
+    ctx.font = `600 ${Math.round(20 * scale)}px Segoe UI, system-ui, sans-serif`;
+    ctx.fillText("Opponent left", cx, cy - 12 * scale);
+
+    ctx.fillStyle = "#e8d4b8";
+    ctx.font = `${Math.round(14 * scale)}px Segoe UI, system-ui, sans-serif`;
+    ctx.fillText("Match paused", cx, cy + 14 * scale);
+  } else if (gameOver) {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fillRect(boardLeft, boardTop, boardW, boardH);
   }
 
   canvas.style.cursor = animating ? "wait" : matchPaused ? "not-allowed" : "pointer";
